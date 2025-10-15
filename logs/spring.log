@@ -1,0 +1,49 @@
+2025-10-13T17:28:00.263Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] c.i.c.l.LbAipPiDirectApplication         : Starting LbAipPiDirectApplication using Java 17.0.12 with PID 28724 (C:\Users\Sir_Noddlessss\Documents\coding\stage\lb_aip_pi-direct\target\classes started by Sir_Noddlessss in C:\Users\Sir_Noddlessss\Documents\coding\stage\lb_aip_pi-direct)
+2025-10-13T17:28:00.274Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] c.i.c.l.LbAipPiDirectApplication         : No active profile set, falling back to 1 default profile: "default"
+2025-10-13T17:28:02.082Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2025-10-13T17:28:02.210Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 104 ms. Found 1 JPA repository interface.
+2025-10-13T17:28:03.024Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8090 (http)
+2025-10-13T17:28:03.044Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2025-10-13T17:28:03.045Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.46]
+2025-10-13T17:28:03.131Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2025-10-13T17:28:03.132Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 2786 ms
+2025-10-13T17:28:03.598Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2025-10-13T17:28:03.746Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.6.29.Final
+2025-10-13T17:28:03.813Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2025-10-13T17:28:04.348Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2025-10-13T17:28:04.402Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2025-10-13T17:28:04.747Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:loadbalancer user=SA
+2025-10-13T17:28:04.750Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2025-10-13T17:28:04.797Z  WARN 28724 --- [dynamic-nginx-loadbalancer] [main] org.hibernate.orm.deprecation            : HHH90000025: H2Dialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2025-10-13T17:28:04.841Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-1)']
+	Database driver: undefined/unknown
+	Database version: 2.3.232
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2025-10-13T17:28:06.356Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2025-10-13T17:28:06.413Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2025-10-13T17:28:06.448Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] c.i.c.l.service.NginxConfigService       : === Initializing NGINX Configuration Service ===
+2025-10-13T17:28:06.451Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] c.i.c.l.service.NginxConfigService       : === NGINX Configuration Service Initialized (async check running) ===
+2025-10-13T17:28:06.946Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2025-10-13T17:28:07.968Z  WARN 28724 --- [dynamic-nginx-loadbalancer] [main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2025-10-13T17:28:08.217Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : NGINX running status: false
+2025-10-13T17:28:08.218Z  WARN 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : NGINX is not running. Attempting to start NGINX...
+2025-10-13T17:28:08.218Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : Attempting to start NGINX at: C:\nginx-1.29.1\nginx.exe
+2025-10-13T17:28:08.219Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : NGINX directory: C:\nginx-1.29.1
+2025-10-13T17:28:08.219Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : Testing NGINX configuration before starting...
+2025-10-13T17:28:08.404Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : NGINX config test exit code: 0
+2025-10-13T17:28:08.405Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : NGINX config test output:
+nginx: the configuration file C:\nginx-1.29.1/conf/nginx.conf syntax is ok
+nginx: configuration file C:\nginx-1.29.1/conf/nginx.conf test is successful
+
+2025-10-13T17:28:08.405Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [nginx-startup-thread] c.i.c.l.service.NginxConfigService       : Starting NGINX...
+2025-10-13T17:28:08.718Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.s.b.a.h2.H2ConsoleAutoConfiguration    : H2 console available at '/h2-console'. Database available at 'jdbc:h2:mem:loadbalancer'
+2025-10-13T17:28:08.748Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 4 endpoints beneath base path '/actuator'
+2025-10-13T17:28:08.887Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8090 (http) with context path '/'
+2025-10-13T17:28:08.912Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [main] c.i.c.l.LbAipPiDirectApplication         : Started LbAipPiDirectApplication in 9.485 seconds (process running for 10.478)
+2025-10-13T17:28:09.590Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [RMI TCP Connection(3)-172.16.16.101] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2025-10-13T17:28:09.591Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [RMI TCP Connection(3)-172.16.16.101] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2025-10-13T17:28:09.595Z  INFO 28724 --- [dynamic-nginx-loadbalancer] [RMI TCP Connection(3)-172.16.16.101] o.s.web.servlet.DispatcherServlet        : Completed initialization in 4 ms
