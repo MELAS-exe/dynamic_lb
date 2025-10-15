@@ -1,0 +1,24 @@
+# NGINX Upstream Configuration Template
+# This template will be populated by the Dynamic Load Balancer
+# Generated at: {{TIMESTAMP}}
+# Managed by: Dynamic NGINX Load Balancer Service
+
+{{UPSTREAM_BLOCK}}
+
+# Additional upstream configuration options
+# Uncomment and modify as needed:
+
+# upstream backend_ssl {
+#     keepalive 32;
+#
+#     # SSL backend servers
+#     server backend1.example.com:443 weight=10 max_fails=3 fail_timeout=30s;
+#     server backend2.example.com:443 weight=10 max_fails=3 fail_timeout=30s;
+# }
+
+# upstream backend_api {
+#     ip_hash;  # Session persistence
+#
+#     server api1.example.com:8080 weight=10;
+#     server api2.example.com:8080 weight=10;
+# }

@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # SpringBoot Load Balancer Service
+  loadbalancer:
+    build: .
+    container_name: loadbalancer-app
+    ports:
+      - "8090:8090"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    volumes:
+      - nginx-config:/nginx-config
+    user: "1000:1000"
+    networks:
+      - loadbalancer-network
+    depends_on:
+      nginx:
+        condition: service_started
+      backend1:
+        condition: service_started
+      backend2:
+        condition: service_started
+      backend3:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/loadbalancer/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # NGINX Load Balancer
+  nginx:
+    build: ./nginx
+    container_name: nginx-lb
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - nginx-config:/etc/nginx/conf.d
+      - nginx-logs:/var/log/nginx
+    networks:
+      - loadbalancer-network
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Backend Server 1
+  backend1:
+    image: nginx:alpine
+    container_name: backend-server-1
+    volumes:
+      - ./backend/server1:/usr/share/nginx/html:ro
+    networks:
+      - loadbalancer-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  # Backend Server 2
+  backend2:
+    image: nginx:alpine
+    container_name: backend-server-2
+    volumes:
+      - ./backend/server2:/usr/share/nginx/html:ro
+    networks:
+      - loadbalancer-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  # Backend Server 3
+  backend3:
+    image: nginx:alpine
+    container_name: backend-server-3
+    volumes:
+      - ./backend/server3:/usr/share/nginx/html:ro
+    networks:
+      - loadbalancer-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+networks:
+  loadbalancer-network:
+    driver: bridge
+
+volumes:
+  nginx-config:
+  nginx-logs:

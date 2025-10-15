@@ -1,0 +1,73 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: dynamic-nginx-loadbalancer
+
+  datasource:
+    url: jdbc:h2:mem:loadbalancer
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+loadbalancer:
+  servers:
+    - id: server1
+      host: 127.0.0.1
+      port: 8081
+      name: "Backend Server 1"
+    - id: server2
+      host: 127.0.0.1
+      port: 8082
+      name: "Backend Server 2"
+    - id: server3
+      host: 127.0.0.1
+      port: 8083
+      name: "Backend Server 3"
+
+  nginx:
+    template-path: ".\\src\\main\\resources\\nginx\\upstream.conf.template"
+    config-path: "C:\\nginx-1.29.1\\conf\\conf.d\\upstream.conf"
+    reload-command: "C:\\nginx-1.29.1\\nginx.exe -s reload"
+    upstream-name: "backend"
+    auto-start: true
+
+  weight-factors:
+    response-time: 0.25
+    error-rate: 0.25
+    timeout-rate: 0.15
+    uptime: 0.20
+    degradation: 0.15
+
+  simulation:
+    enabled: true
+    interval-seconds: 60
+    metrics-variation: 0.2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.loadbalancer: DEBUG
+    org.springframework.web: INFO
+  file:
+    path: ".\\logs"

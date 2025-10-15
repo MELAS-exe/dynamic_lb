@@ -1,0 +1,12 @@
+.git/
+.gitignore
+*.md
+.mvn/
+mvnw
+mvnw.cmd
+.idea/
+*.iml
+*.log
+nginx-config/
+logs/
+*.backup.*
