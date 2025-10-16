@@ -33,6 +33,8 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
+      - '--service-account'
+      - '${_SERVICE_ACCOUNT}'
       - '--memory'
       - '4Gi'
       - '--cpu'
