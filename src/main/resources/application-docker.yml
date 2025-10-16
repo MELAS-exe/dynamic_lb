@@ -18,19 +18,16 @@ spring:
     show-sql: false
 
 loadbalancer:
-#  servers:
-#    - id: server1
-#      host: 127.0.0.1
-#      port: 8081
-#      name: "Backend Server 1"
-#    - id: server2
-#      host: 127.0.0.1
-#      port: 8082
-#      name: "Backend Server 2"
-#    - id: server3
-#      host: 127.0.0.1
-#      port: 8083
-#      name: "Backend Server 3"
+  servers:
+    - id: server1
+      host: official-joke-api.appspot.com
+      name: "Backend Server 1"
+    - id: server2
+      host: httpbin.org
+      name: "Backend Server 2"
+    - id: server3
+      host: catfact.ninja
+      name: "Backend Server 3"
 
   nginx:
     config-path: "/nginx-config/upstream.conf"

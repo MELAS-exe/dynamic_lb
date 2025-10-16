@@ -44,11 +44,11 @@ steps:
       - '--max-instances'
       - '10'
       - '--concurrency'
-      - '1'
+      - '1000'  # Increased since NGINX can handle many connections
       - '--port'
-      - '8080'
+      - '80'  # Changed to port 80 for NGINX
       - '--set-env-vars'
-      - 'SERVICE_NAME=${_SERVICE_NAME}'
+      - 'SERVICE_NAME=${_SERVICE_NAME},SPRING_PROFILES_ACTIVE=docker'
       - '--execution-environment'
       - 'gen2'
 

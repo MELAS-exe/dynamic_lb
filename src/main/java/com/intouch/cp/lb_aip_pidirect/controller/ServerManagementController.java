@@ -67,7 +67,7 @@ public class ServerManagementController {
             }
 
             // Validate required fields
-            if (newServer.getId() == null || newServer.getHost() == null || newServer.getPort() == null) {
+            if (newServer.getId() == null || newServer.getHost() == null) {
                 response.put("status", "error");
                 response.put("message", "Missing required fields: id, host, port");
                 return ResponseEntity.badRequest().body(response);
@@ -178,9 +178,7 @@ public class ServerManagementController {
             if (updatedServer.getHost() != null) {
                 existingServer.setHost(updatedServer.getHost());
             }
-            if (updatedServer.getPort() != null) {
-                existingServer.setPort(updatedServer.getPort());
-            }
+
             if (updatedServer.getName() != null) {
                 existingServer.setName(updatedServer.getName());
             }

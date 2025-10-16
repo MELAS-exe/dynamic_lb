@@ -11,23 +11,21 @@ public class ServerInfo {
 
     private String id;
     private String host;
-    private Integer port;
     private String name;
     private boolean enabled = true;
 
-    public ServerInfo(String id, String host, Integer port, String name) {
+    public ServerInfo(String id, String host, String name) {
         this.id = id;
         this.host = host;
-        this.port = port;
         this.name = name;
         this.enabled = true;
     }
 
     public String getAddress() {
-        return host + ":" + port;
+        return host;
     }
 
     public String getFullAddress() {
-        return "http://" + host + ":" + port;
+        return host;
     }
 }
