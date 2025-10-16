@@ -1,6 +1,7 @@
 server:
   port: ${PORT}
 
+
 spring:
   application:
     name: dynamic-nginx-loadbalancer
