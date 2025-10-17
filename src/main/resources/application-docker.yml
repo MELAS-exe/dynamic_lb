@@ -20,13 +20,16 @@ spring:
 loadbalancer:
   servers:
     - id: server1
-      host: official-joke-api.appspot.com
+      host: backend-a-971441253898.europe-west1.run.app
+      port: 443
       name: "Backend Server 1"
     - id: server2
-      host: httpbin.org
+      host: backend-b-971441253898.europe-west1.run.app
+      port: 443
       name: "Backend Server 2"
     - id: server3
-      host: catfact.ninja
+      host: backend-c-971441253898.europe-west1.run.app
+      port: 443
       name: "Backend Server 3"
 
   nginx:
