@@ -38,11 +38,10 @@ COPY start.sh /start.sh
 COPY auto-reload.sh /usr/local/bin/auto-reload.sh
 RUN chmod +x /start.sh /usr/local/bin/auto-reload.sh
 
+# Variables d'environnement
 ENV SPRING_PROFILES_ACTIVE=docker
 ENV JAVA_OPTS="-Xmx512m -Xms256m"
-ENV PORT=80
 
-# Only expose port 80 for Cloud Run
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

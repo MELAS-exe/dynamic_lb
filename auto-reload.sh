@@ -11,10 +11,10 @@ while true; do
         CURRENT_MODIFIED=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || stat -f %m "$CONFIG_FILE" 2>/dev/null || echo "0")
 
         if [ "$CURRENT_MODIFIED" != "$LAST_MODIFIED" ] && [ "$CURRENT_MODIFIED" != "0" ]; then
-            echo "[$(date)] Configuration file changed, testing..."
+            echo "[$(date)] Configuration changed, testing..."
 
             if nginx -t 2>&1 | tee /tmp/nginx-test.log; then
-                echo "[$(date)] Configuration valid, reloading NGINX..."
+                echo "[$(date)] Configuration valid, reloading..."
                 nginx -s reload
 
                 if [ $? -eq 0 ]; then
@@ -24,11 +24,9 @@ while true; do
                     echo "[$(date)] ✗ NGINX reload failed"
                 fi
             else
-                echo "[$(date)] ✗ Configuration test failed, skipping reload"
+                echo "[$(date)] ✗ Configuration test failed"
                 cat /tmp/nginx-test.log
             fi
         fi
-    else
-        echo "[$(date)] Warning: Config file not found: $CONFIG_FILE"
     fi
 done

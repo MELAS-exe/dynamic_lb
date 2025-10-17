@@ -103,6 +103,27 @@ public class NginxConfigService {
         }
     }
 
+    private void writeLocationBlocks(String content) throws IOException {
+        String configDir = nginxConfig.getNginx().getConfigPath();
+        Path locationPath = Paths.get(configDir).getParent().resolve("locations.conf");
+
+        // Ensure directory exists
+        Files.createDirectories(locationPath.getParent());
+
+        // Write configuration atomically
+        Path tempPath = Paths.get(locationPath.toString() + ".tmp");
+        Files.writeString(tempPath, content,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING);
+
+        // Atomic move
+        Files.move(tempPath, locationPath,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+
+        log.info("Location blocks written to: {}", locationPath);
+    }
+
     private void writeConfigurationFile(String content) throws IOException {
         Path configPath = Paths.get(nginxConfig.getNginx().getConfigPath());
 
