@@ -45,8 +45,6 @@ steps:
       - '10'
       - '--timeout'
       - '300'
-      - '--request-timeout'
-      - '60s'
       - '--cpu-boost'
       - '--concurrency'
       - '1000'  # Increased since NGINX can handle many connections
