@@ -12,7 +12,7 @@ import java.util.List;
 public class MetricsCalculator {
 
     /**
-     * Calculate average response time for a list of metrics
+     * Calculate average EWMA latency for a list of metrics
      */
     public double calculateAverageResponseTime(List<ServerMetrics> metrics) {
         if (metrics == null || metrics.isEmpty()) {
@@ -20,8 +20,8 @@ public class MetricsCalculator {
         }
 
         return metrics.stream()
-                .filter(m -> m.getAvgResponseTimeMs() != null)
-                .mapToDouble(ServerMetrics::getAvgResponseTimeMs)
+                .filter(m -> m.getEffectiveLatency() != null)
+                .mapToDouble(ServerMetrics::getEffectiveLatency)
                 .average()
                 .orElse(0.0);
     }
@@ -42,16 +42,30 @@ public class MetricsCalculator {
     }
 
     /**
-     * Calculate trend for response time (positive = getting worse, negative = improving)
+     * Calculate average success rate for a list of metrics
+     */
+    public double calculateAverageSuccessRate(List<ServerMetrics> metrics) {
+        if (metrics == null || metrics.isEmpty()) {
+            return 0.0;
+        }
+
+        return metrics.stream()
+                .filter(m -> m.getSuccessRatePercentage() != null)
+                .mapToDouble(ServerMetrics::getSuccessRatePercentage)
+                .average()
+                .orElse(0.0);
+    }
+
+    /**
+     * Calculate trend for EWMA latency (positive = getting worse, negative = improving)
      */
     public double calculateResponseTimeTrend(List<ServerMetrics> metrics) {
         if (metrics == null || metrics.size() < 2) {
             return 0.0;
         }
 
-        // Sort by creation time
         List<ServerMetrics> sortedMetrics = metrics.stream()
-                .filter(m -> m.getAvgResponseTimeMs() != null && m.getCreatedAt() != null)
+                .filter(m -> m.getEffectiveLatency() != null && m.getCreatedAt() != null)
                 .sorted((a, b) -> a.getCreatedAt().compareTo(b.getCreatedAt()))
                 .toList();
 
@@ -59,47 +73,44 @@ public class MetricsCalculator {
             return 0.0;
         }
 
-        // Simple linear trend calculation
         int n = sortedMetrics.size();
         double recent = sortedMetrics.subList(n/2, n).stream()
-                .mapToDouble(ServerMetrics::getAvgResponseTimeMs)
+                .mapToDouble(ServerMetrics::getEffectiveLatency)
                 .average()
                 .orElse(0.0);
 
         double older = sortedMetrics.subList(0, n/2).stream()
-                .mapToDouble(ServerMetrics::getAvgResponseTimeMs)
+                .mapToDouble(ServerMetrics::getEffectiveLatency)
                 .average()
                 .orElse(0.0);
 
-        return ((recent - older) / older) * 100; // Percentage change
+        if (older == 0) return 0.0;
+
+        return ((recent - older) / older) * 100;
     }
 
     /**
-     * Calculate server stability score based on variance in metrics
+     * Calculate server stability score based on variance in EWMA latency
      */
     public double calculateStabilityScore(List<ServerMetrics> metrics) {
         if (metrics == null || metrics.size() < 3) {
-            return 0.5; // Neutral score for insufficient data
+            return 0.5;
         }
 
-        // Calculate coefficient of variation for response time
         double avgResponseTime = calculateAverageResponseTime(metrics);
         if (avgResponseTime == 0) {
             return 0.0;
         }
 
         double variance = metrics.stream()
-                .filter(m -> m.getAvgResponseTimeMs() != null)
-                .mapToDouble(m -> Math.pow(m.getAvgResponseTimeMs() - avgResponseTime, 2))
+                .filter(m -> m.getEffectiveLatency() != null)
+                .mapToDouble(m -> Math.pow(m.getEffectiveLatency() - avgResponseTime, 2))
                 .average()
                 .orElse(0.0);
 
         double stdDev = Math.sqrt(variance);
         double coefficientOfVariation = stdDev / avgResponseTime;
 
-        // Convert to stability score (0-1, higher is more stable)
-        // CV < 0.1 = very stable (score 1.0)
-        // CV > 0.5 = very unstable (score 0.0)
         return Math.max(0.0, Math.min(1.0, 1.0 - (coefficientOfVariation / 0.5)));
     }
 
@@ -117,8 +128,6 @@ public class MetricsCalculator {
 
         double ratio = (double) metrics.getLatencyP99() / metrics.getLatencyP50();
 
-        // Good consistency: P99/P50 ratio < 2.0 (score 1.0)
-        // Poor consistency: P99/P50 ratio > 10.0 (score 0.0)
         if (ratio <= 2.0) {
             return 1.0;
         } else if (ratio >= 10.0) {
@@ -136,17 +145,18 @@ public class MetricsCalculator {
             return 0.0;
         }
 
-        double responseTimeScore = calculateResponseTimeScore(metrics.getAvgResponseTimeMs());
+        double responseTimeScore = calculateResponseTimeScore(metrics.getEffectiveLatency());
         double errorRateScore = calculateErrorRateScore(metrics.getErrorRatePercentage());
+        double successRateScore = calculateSuccessRateScore(metrics.getSuccessRatePercentage());
         double timeoutRateScore = calculateTimeoutRateScore(metrics.getTimeoutRatePercentage());
         double uptimeScore = calculateUptimeScore(metrics.getUptimePercentage());
         double latencyConsistencyScore = calculateLatencyConsistency(metrics);
 
-        // Weighted average
-        return (responseTimeScore * 0.25) +
-                (errorRateScore * 0.25) +
+        return (responseTimeScore * 0.20) +
+                (errorRateScore * 0.20) +
+                (successRateScore * 0.15) +
                 (timeoutRateScore * 0.15) +
-                (uptimeScore * 0.25) +
+                (uptimeScore * 0.20) +
                 (latencyConsistencyScore * 0.10);
     }
 
@@ -171,7 +181,7 @@ public class MetricsCalculator {
         }
 
         List<ServerMetrics> sortedMetrics = metrics.stream()
-                .filter(m -> m.getRequestPerMinute() != null && m.getCreatedAt() != null)
+                .filter(m -> m.getRequestsPerMinute() != null && m.getCreatedAt() != null)
                 .sorted((a, b) -> a.getCreatedAt().compareTo(b.getCreatedAt()))
                 .toList();
 
@@ -181,12 +191,12 @@ public class MetricsCalculator {
 
         int n = sortedMetrics.size();
         double recentAvg = sortedMetrics.subList(n/2, n).stream()
-                .mapToDouble(m -> m.getRequestPerMinute().doubleValue())
+                .mapToDouble(m -> m.getRequestsPerMinute().doubleValue())
                 .average()
                 .orElse(0.0);
 
         double olderAvg = sortedMetrics.subList(0, n/2).stream()
-                .mapToDouble(m -> m.getRequestPerMinute().doubleValue())
+                .mapToDouble(m -> m.getRequestsPerMinute().doubleValue())
                 .average()
                 .orElse(0.0);
 
@@ -208,8 +218,58 @@ public class MetricsCalculator {
         double responseTimeTrend = calculateResponseTimeTrend(metrics);
         double errorRateTrend = calculateErrorRateTrend(metrics);
 
-        // Server is degrading if response time increased by >20% or error rate increased by >100%
         return responseTimeTrend > 20.0 || errorRateTrend > 100.0;
+    }
+
+    /**
+     * Calculate EWMA smoothness score
+     */
+    public double calculateEwmaSmoothness(List<ServerMetrics> metrics) {
+        if (metrics == null || metrics.size() < 3) {
+            return 0.5;
+        }
+
+        List<ServerMetrics> sortedMetrics = metrics.stream()
+                .filter(m -> m.getAvgResponseTimeMs() != null && m.getEwmaLatencyMs() != null)
+                .sorted((a, b) -> a.getCreatedAt().compareTo(b.getCreatedAt()))
+                .toList();
+
+        if (sortedMetrics.size() < 3) {
+            return 0.5;
+        }
+
+        double instantVariance = calculateVariance(
+                sortedMetrics.stream()
+                        .mapToDouble(ServerMetrics::getAvgResponseTimeMs)
+                        .toArray()
+        );
+
+        double ewmaVariance = calculateVariance(
+                sortedMetrics.stream()
+                        .mapToDouble(ServerMetrics::getEwmaLatencyMs)
+                        .toArray()
+        );
+
+        if (instantVariance == 0) return 1.0;
+
+        double smoothnessRatio = 1.0 - (ewmaVariance / instantVariance);
+        return Math.max(0.0, Math.min(1.0, smoothnessRatio));
+    }
+
+    private double calculateVariance(double[] values) {
+        if (values.length < 2) return 0.0;
+
+        double mean = 0.0;
+        for (double value : values) {
+            mean += value;
+        }
+        mean /= values.length;
+
+        double variance = 0.0;
+        for (double value : values) {
+            variance += Math.pow(value - mean, 2);
+        }
+        return variance / values.length;
     }
 
     private double calculateErrorRateTrend(List<ServerMetrics> metrics) {
@@ -257,6 +317,13 @@ public class MetricsCalculator {
         if (errorRate <= 0) return 1.0;
         if (errorRate >= 10) return 0.0;
         return 1.0 - (errorRate / 10.0);
+    }
+
+    private double calculateSuccessRateScore(Double successRate) {
+        if (successRate == null) return 0.0;
+        if (successRate >= 100) return 1.0;
+        if (successRate <= 90) return 0.0;
+        return (successRate - 90.0) / 10.0;
     }
 
     private double calculateTimeoutRateScore(Double timeoutRate) {

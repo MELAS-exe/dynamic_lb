@@ -64,6 +64,8 @@ public class NginxConfigGenerator {
             if (i == activeWeights.size() - 1) {
                 // Last server gets the remainder (100% - cumulative)
                 config.append("    *                ").append(weight.getServerAddress())
+                        .append("max-fails=3")
+                        .append("fail_timeout=30s")
                         .append(";  # ").append(weight.getServerId())
                         .append(" - Health: ").append(String.format("%.3f", weight.getHealthScore()))
                         .append("\n");
@@ -71,6 +73,8 @@ public class NginxConfigGenerator {
                 cumulativePercent += percentage;
                 config.append("    ").append(String.format("%.2f%%", cumulativePercent))
                         .append("           ").append(weight.getServerAddress())
+                        .append("max-fails=3")
+                        .append("fail_timeout=30s")
                         .append(";  # ").append(weight.getServerId())
                         .append(" - Weight: ").append(weight.getWeight())
                         .append("\n");

@@ -42,15 +42,50 @@ public class MetricsCollectionService {
                 return;
             }
 
+            // Calculate EWMA latency based on previous metrics
+            calculateEwmaLatency(serverId, metrics);
+
             // Save metrics
             metricsRepository.save(metrics);
-            log.debug("Metrics saved for server: {} at {}", serverId, metrics.getCreatedAt());
+            log.debug("Metrics saved for server: {} at {} (EWMA: {}ms, Instant: {}ms)",
+                    serverId,
+                    metrics.getCreatedAt(),
+                    String.format("%.2f", metrics.getEwmaLatencyMs()),
+                    String.format("%.2f", metrics.getAvgResponseTimeMs()));
 
             // Trigger weight recalculation if all servers have recent metrics
             triggerWeightRecalculationIfReady();
 
         } catch (Exception e) {
             log.error("Error processing metrics for server {}: {}", serverId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Calcule la latence EWMA pour les nouvelles métriques
+     * Lt = α * Mt + (1 - α) * Lt-1
+     */
+    private void calculateEwmaLatency(String serverId, ServerMetrics currentMetrics) {
+        // Récupérer les métriques précédentes pour ce serveur
+        var previousMetrics = metricsRepository.findFirstByServerIdOrderByCreatedAtDesc(serverId);
+
+        Double previousEwma = null;
+        if (previousMetrics.isPresent()) {
+            previousEwma = previousMetrics.get().getEwmaLatencyMs();
+        }
+
+        // Calculer la nouvelle EWMA
+        currentMetrics.calculateEwmaLatency(previousEwma);
+
+        if (previousEwma != null) {
+            log.debug("EWMA calculation for {}: Previous={}ms, Instant={}ms, New EWMA={}ms",
+                    serverId,
+                    String.format("%.2f", previousEwma),
+                    String.format("%.2f", currentMetrics.getAvgResponseTimeMs()),
+                    String.format("%.2f", currentMetrics.getEwmaLatencyMs()));
+        } else {
+            log.debug("First EWMA for {}: {}ms", serverId,
+                    String.format("%.2f", currentMetrics.getEwmaLatencyMs()));
         }
     }
 
@@ -84,6 +119,15 @@ public class MetricsCollectionService {
                         freshMetrics.size(), latestMetrics.size());
             }
 
+            // Log EWMA values for monitoring
+            freshMetrics.forEach(m ->
+                    log.debug("Server {} - Instant: {}ms, EWMA: {}ms, Health: {:.3f}",
+                            m.getServerId(),
+                            String.format("%.2f", m.getAvgResponseTimeMs()),
+                            String.format("%.2f", m.getEwmaLatencyMs()),
+                            m.getHealthScore())
+            );
+
             // Calculate new weights
             var weightAllocations = weightCalculationService.calculateWeights(freshMetrics);
 
@@ -110,19 +154,18 @@ public class MetricsCollectionService {
                 })
                 .sum();
 
-        if (serversWithRecentMetrics >= serverIds.size() * 0.8) { // 80% of servers have recent metrics
+        if (serversWithRecentMetrics >= serverIds.size() * 0.8) {
             log.debug("Sufficient recent metrics available. Triggering weight recalculation.");
             processMetricsAndUpdateWeights();
         }
     }
 
-    @Scheduled(cron = "0 0 2 * * ?") // Daily at 2 AM
+    @Scheduled(cron = "0 0 2 * * ?")
     @Transactional
     public void cleanupOldMetrics() {
         try {
             log.info("Starting metrics cleanup");
 
-            // Keep metrics for last 7 days
             LocalDateTime cutoff = LocalDateTime.now().minusDays(7);
             List<ServerMetrics> oldMetrics = metricsRepository.findByCreatedAtBefore(cutoff);
 
@@ -156,7 +199,6 @@ public class MetricsCollectionService {
     private boolean isValidMetrics(ServerMetrics metrics) {
         if (metrics == null) return false;
 
-        // Check required fields
         if (metrics.getAvgResponseTimeMs() == null || metrics.getAvgResponseTimeMs() < 0) {
             log.warn("Invalid avgResponseTimeMs: {}", metrics.getAvgResponseTimeMs());
             return false;
@@ -166,6 +208,13 @@ public class MetricsCollectionService {
                 metrics.getErrorRatePercentage() < 0 ||
                 metrics.getErrorRatePercentage() > 100) {
             log.warn("Invalid errorRatePercentage: {}", metrics.getErrorRatePercentage());
+            return false;
+        }
+
+        if (metrics.getSuccessRatePercentage() == null ||
+                metrics.getSuccessRatePercentage() < 0 ||
+                metrics.getSuccessRatePercentage() > 100) {
+            log.warn("Invalid successRatePercentage: {}", metrics.getSuccessRatePercentage());
             return false;
         }
 
@@ -183,7 +232,6 @@ public class MetricsCollectionService {
             return false;
         }
 
-        // Validate latency values
         if (metrics.getLatencyP50() != null && metrics.getLatencyP50() < 0) {
             log.warn("Invalid latencyP50: {}", metrics.getLatencyP50());
             return false;
@@ -196,6 +244,11 @@ public class MetricsCollectionService {
 
         if (metrics.getLatencyP99() != null && metrics.getLatencyP99() < 0) {
             log.warn("Invalid latencyP99: {}", metrics.getLatencyP99());
+            return false;
+        }
+
+        if (metrics.getRequestsPerMinute() != null && metrics.getRequestsPerMinute() < 0) {
+            log.warn("Invalid requestsPerMinute: {}", metrics.getRequestsPerMinute());
             return false;
         }
 

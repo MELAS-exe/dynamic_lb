@@ -5,7 +5,6 @@ import com.intouch.cp.lb_aip_pidirect.service.MetricsCollectionService;
 import com.intouch.cp.lb_aip_pidirect.service.SimulationService;
 import com.intouch.cp.lb_aip_pidirect.util.MetricsCalculator;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -25,7 +24,6 @@ public class MetricsController {
     private final MetricsCollectionService metricsCollectionService;
     private final MetricsCalculator metricsCalculator;
 
-    // Make SimulationService optional
     @Autowired(required = false)
     private SimulationService simulationService;
 
@@ -53,6 +51,8 @@ public class MetricsController {
             response.put("message", "Metrics received and processed");
             response.put("serverId", serverId);
             response.put("timestamp", LocalDateTime.now().toString());
+            response.put("instantLatency", String.format("%.2fms", metrics.getAvgResponseTimeMs()));
+            response.put("ewmaLatency", String.format("%.2fms", metrics.getEwmaLatencyMs()));
 
             return ResponseEntity.ok(response);
 
@@ -82,7 +82,7 @@ public class MetricsController {
     /**
      * Get metrics for a specific server
      */
-    @GetMapping("/server/{serverId}")   
+    @GetMapping("/server/{serverId}")
     public ResponseEntity<List<ServerMetrics>> getServerMetrics(@PathVariable String serverId) {
         log.debug("Fetching metrics for server: {}", serverId);
 
@@ -106,7 +106,7 @@ public class MetricsController {
     }
 
     /**
-     * Get metrics analysis for a server
+     * Get metrics analysis for a server (including EWMA analysis)
      */
     @GetMapping("/server/{serverId}/analysis")
     public ResponseEntity<Map<String, Object>> getServerAnalysis(@PathVariable String serverId) {
@@ -122,12 +122,18 @@ public class MetricsController {
 
         // Basic statistics
         analysis.put("totalRecords", metrics.size());
-        analysis.put("avgResponseTime", metricsCalculator.calculateAverageResponseTime(metrics));
+        analysis.put("avgEwmaLatency", metricsCalculator.calculateAverageResponseTime(metrics));
         analysis.put("avgErrorRate", metricsCalculator.calculateAverageErrorRate(metrics));
+        analysis.put("avgSuccessRate", metricsCalculator.calculateAverageSuccessRate(metrics));
 
         // Trends
-        analysis.put("responseTimeTrend", metricsCalculator.calculateResponseTimeTrend(metrics));
+        analysis.put("latencyTrend", metricsCalculator.calculateResponseTimeTrend(metrics));
         analysis.put("requestVolumeTrend", metricsCalculator.calculateRequestVolumeTrend(metrics));
+
+        // EWMA specific analysis
+        if (metrics.size() >= 3) {
+            analysis.put("ewmaSmoothness", metricsCalculator.calculateEwmaSmoothness(metrics));
+        }
 
         // Health scores
         if (!metrics.isEmpty()) {
@@ -137,9 +143,59 @@ public class MetricsController {
             analysis.put("latencyConsistency", metricsCalculator.calculateLatencyConsistency(latest));
             analysis.put("isDegrading", metricsCalculator.isServerDegrading(metrics));
             analysis.put("isMetricsFresh", metricsCalculator.isMetricsFresh(latest, 5));
+
+            // EWMA details
+            Map<String, Object> ewmaDetails = new HashMap<>();
+            ewmaDetails.put("instantLatency", latest.getAvgResponseTimeMs());
+            ewmaDetails.put("ewmaLatency", latest.getEwmaLatencyMs());
+            ewmaDetails.put("smoothingFactor", latest.getEwmaAlpha());
+            if (latest.getEwmaLatencyMs() != null && latest.getAvgResponseTimeMs() != null) {
+                double variance = Math.abs(latest.getEwmaLatencyMs() - latest.getAvgResponseTimeMs());
+                ewmaDetails.put("varianceFromInstant", variance);
+                ewmaDetails.put("variancePercentage",
+                        (variance / latest.getAvgResponseTimeMs()) * 100);
+            }
+            analysis.put("ewmaDetails", ewmaDetails);
         }
 
         return ResponseEntity.ok(analysis);
+    }
+
+    /**
+     * Get EWMA comparison for a server
+     */
+    @GetMapping("/server/{serverId}/ewma-comparison")
+    public ResponseEntity<Map<String, Object>> getEwmaComparison(@PathVariable String serverId) {
+        log.debug("Generating EWMA comparison for server: {}", serverId);
+
+        List<ServerMetrics> metrics = metricsCollectionService.getMetricsForServer(serverId);
+
+        if (metrics.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> comparison = new HashMap<>();
+
+        List<Map<String, Object>> dataPoints = metrics.stream()
+                .limit(20) // Last 20 data points
+                .map(m -> {
+                    Map<String, Object> point = new HashMap<>();
+                    point.put("timestamp", m.getCreatedAt());
+                    point.put("instantLatency", m.getAvgResponseTimeMs());
+                    point.put("ewmaLatency", m.getEwmaLatencyMs());
+                    point.put("difference",
+                            m.getEwmaLatencyMs() != null && m.getAvgResponseTimeMs() != null
+                                    ? Math.abs(m.getEwmaLatencyMs() - m.getAvgResponseTimeMs())
+                                    : null);
+                    return point;
+                })
+                .toList();
+
+        comparison.put("dataPoints", dataPoints);
+        comparison.put("smoothnessScore", metricsCalculator.calculateEwmaSmoothness(metrics));
+        comparison.put("serverId", serverId);
+
+        return ResponseEntity.ok(comparison);
     }
 
     /**
@@ -156,16 +212,22 @@ public class MetricsController {
         summary.put("totalMetricsRecords", metricsCollectionService.getMetricsCount());
 
         if (!allMetrics.isEmpty()) {
-            // Calculate system-wide averages
-            double avgResponseTime = allMetrics.stream()
-                    .filter(m -> m.getAvgResponseTimeMs() != null)
-                    .mapToDouble(ServerMetrics::getAvgResponseTimeMs)
+            // Calculate system-wide averages using EWMA
+            double avgEwmaLatency = allMetrics.stream()
+                    .filter(m -> m.getEffectiveLatency() != null)
+                    .mapToDouble(ServerMetrics::getEffectiveLatency)
                     .average()
                     .orElse(0.0);
 
             double avgErrorRate = allMetrics.stream()
                     .filter(m -> m.getErrorRatePercentage() != null)
                     .mapToDouble(ServerMetrics::getErrorRatePercentage)
+                    .average()
+                    .orElse(0.0);
+
+            double avgSuccessRate = allMetrics.stream()
+                    .filter(m -> m.getSuccessRatePercentage() != null)
+                    .mapToDouble(ServerMetrics::getSuccessRatePercentage)
                     .average()
                     .orElse(0.0);
 
@@ -179,8 +241,9 @@ public class MetricsController {
                     .filter(ServerMetrics::isHealthy)
                     .count();
 
-            summary.put("systemAvgResponseTime", avgResponseTime);
+            summary.put("systemAvgEwmaLatency", avgEwmaLatency);
             summary.put("systemAvgErrorRate", avgErrorRate);
+            summary.put("systemAvgSuccessRate", avgSuccessRate);
             summary.put("systemAvgUptime", avgUptime);
             summary.put("healthyServers", healthyServers);
             summary.put("unhealthyServers", allMetrics.size() - healthyServers);
@@ -191,126 +254,23 @@ public class MetricsController {
                     .count();
             summary.put("serversWithFreshMetrics", freshMetrics);
             summary.put("serversWithStaleMetrics", allMetrics.size() - freshMetrics);
+
+            // EWMA system-wide analysis
+            Map<String, Object> ewmaSystemStats = new HashMap<>();
+            double avgInstantLatency = allMetrics.stream()
+                    .filter(m -> m.getAvgResponseTimeMs() != null)
+                    .mapToDouble(ServerMetrics::getAvgResponseTimeMs)
+                    .average()
+                    .orElse(0.0);
+
+            ewmaSystemStats.put("avgInstantLatency", avgInstantLatency);
+            ewmaSystemStats.put("avgEwmaLatency", avgEwmaLatency);
+            ewmaSystemStats.put("smoothingEffect",
+                    Math.abs(avgEwmaLatency - avgInstantLatency));
+            summary.put("ewmaSystemStats", ewmaSystemStats);
         }
 
         return ResponseEntity.ok(summary);
-    }
-
-    /**
-     * Simulation endpoints - only available when SimulationService is enabled
-     */
-    @PostMapping("/simulation/server1/degrade")
-    public ResponseEntity<Map<String, String>> simulateServer1Degradation() {
-        if (simulationService == null) {
-            return createSimulationDisabledResponse();
-        }
-
-        simulationService.simulateServer1Degradation();
-
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "success");
-        response.put("message", "Server1 degradation simulation activated");
-
-        return ResponseEntity.ok(response);
-    }
-
-    @PostMapping("/simulation/server2/errors")
-    public ResponseEntity<Map<String, String>> simulateServer2HighErrors() {
-        if (simulationService == null) {
-            return createSimulationDisabledResponse();
-        }
-
-        simulationService.simulateServer2HighErrors();
-
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "success");
-        response.put("message", "Server2 high error simulation activated");
-
-        return ResponseEntity.ok(response);
-    }
-
-    @PostMapping("/simulation/reset")
-    public ResponseEntity<Map<String, String>> resetSimulation() {
-        if (simulationService == null) {
-            return createSimulationDisabledResponse();
-        }
-
-        simulationService.resetAllSimulations();
-
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "success");
-        response.put("message", "All simulations reset - servers healthy");
-
-        return ResponseEntity.ok(response);
-    }
-
-    @PostMapping("/simulation/random")
-    public ResponseEntity<Map<String, String>> triggerRandomSimulation() {
-        if (simulationService == null) {
-            return createSimulationDisabledResponse();
-        }
-
-        simulationService.simulateRandomScenario();
-
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "success");
-        response.put("message", "Random simulation scenario triggered");
-
-        return ResponseEntity.ok(response);
-    }
-
-    @GetMapping("/simulation/status")
-    public ResponseEntity<Map<String, Object>> getSimulationStatus() {
-        if (simulationService == null) {
-            Map<String, Object> response = new HashMap<>();
-            response.put("status", "disabled");
-            response.put("message", "Simulation service is not enabled");
-            return ResponseEntity.ok(response);
-        }
-
-        String status = simulationService.getCurrentSimulationStatus();
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("status", "enabled");
-        response.put("simulationStatus", status);
-
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * Submit custom metrics for testing
-     */
-    @PostMapping("/server/{serverId}/custom")
-    public ResponseEntity<Map<String, String>> submitCustomMetrics(
-            @PathVariable String serverId,
-            @RequestParam double responseTime,
-            @RequestParam double errorRate,
-            @RequestParam double timeoutRate,
-            @RequestParam double uptime) {
-
-        if (simulationService == null) {
-            return createSimulationDisabledResponse();
-        }
-
-        ServerMetrics customMetrics = simulationService.generateSpecificMetrics(
-                serverId, responseTime, errorRate, timeoutRate, uptime);
-
-        metricsCollectionService.receiveMetrics(serverId, customMetrics);
-
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "success");
-        response.put("message", "Custom metrics submitted");
-        response.put("serverId", serverId);
-
-        return ResponseEntity.ok(response);
-    }
-
-    private ResponseEntity<Map<String, String>> createSimulationDisabledResponse() {
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "disabled");
-        response.put("message", "Simulation service is not enabled. Set 'loadbalancer.simulation.enabled=true' to enable simulation features.");
-
-        return ResponseEntity.badRequest().body(response);
     }
 
     /**
