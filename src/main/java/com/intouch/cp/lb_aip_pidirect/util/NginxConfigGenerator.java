@@ -56,8 +56,7 @@ public class NginxConfigGenerator {
             cumulativePercentage += percentage;
 
             // Format percentage with 2 decimal places
-            String percentageStr = String.format("%.2f%%",
-                    i == activeWeights.size() - 1 ? 100.0 : cumulativePercentage);
+            String percentageStr = i == activeWeights.size() - 1 ? "*" : String.format("%.2f%%", cumulativePercentage);
 
             String serverAddress = weight.getServerAddress();
             config.append("    ").append(percentageStr)
