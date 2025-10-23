@@ -76,10 +76,215 @@ public class WeightCalculationService {
 
         ensureMinimumTraffic(allocations);
 
+        // CRITICAL FIX: Apply fixed weights from configuration AFTER calculation
+        applyFixedWeights(allocations);
+
+        // NORMALIZATION: Ensure weights always sum to exactly 100
+        normalizeWeightsToTotal(allocations, 100);
+
         log.info("Weight calculation completed. Active servers: {}",
-                allocations.stream().mapToInt(w -> w.isActive() ? 1 : 0).sum());
+                allocations.stream().filter(WeightAllocation::isActive).count());
 
         return allocations;
+    }
+
+    /**
+     * Apply fixed weights from ServerConfiguration
+     * This method checks each server's configuration and overrides the calculated weight
+     * if a fixed weight is configured
+     */
+    private void applyFixedWeights(List<WeightAllocation> allocations) {
+        for (WeightAllocation allocation : allocations) {
+            String serverId = allocation.getServerId();
+            Integer calculatedWeight = allocation.getWeight();
+
+            // Get the effective weight (will return fixed weight if configured, otherwise calculated weight)
+            Integer effectiveWeight = configService.getEffectiveWeight(serverId, calculatedWeight);
+
+            if (!effectiveWeight.equals(calculatedWeight)) {
+                // Weight was overridden by fixed weight configuration
+                allocation.setWeight(effectiveWeight);
+                allocation.setReason("Fixed weight: " + effectiveWeight + " (Dynamic would be: " + calculatedWeight + ")");
+                log.info("Server {} - Applied fixed weight: {} (calculated was: {})",
+                        serverId, effectiveWeight, calculatedWeight);
+            }
+        }
+    }
+
+    /**
+     * Normalize weights to sum to exactly the target total (usually 100)
+     * This ensures proper percentage distribution in split_clients configuration
+     *
+     * Strategy:
+     * 1. Separate fixed-weight servers from dynamic-weight servers
+     * 2. Calculate remaining weight for dynamic servers = target - sum(fixed weights)
+     * 3. Distribute remaining weight proportionally among dynamic servers
+     * 4. Handle edge cases (fixed weights > target, all weights fixed, rounding)
+     */
+    private void normalizeWeightsToTotal(List<WeightAllocation> allocations, int targetTotal) {
+        // Filter active allocations only
+        List<WeightAllocation> activeAllocations = allocations.stream()
+                .filter(WeightAllocation::isActive)
+                .toList();
+
+        if (activeAllocations.isEmpty()) {
+            log.warn("No active allocations to normalize");
+            return;
+        }
+
+        // Separate fixed and dynamic weight allocations
+        List<WeightAllocation> fixedWeightAllocations = new ArrayList<>();
+        List<WeightAllocation> dynamicWeightAllocations = new ArrayList<>();
+
+        for (WeightAllocation allocation : activeAllocations) {
+            String serverId = allocation.getServerId();
+            var config = configService.getConfiguration(serverId);
+
+            if (config.isPresent() &&
+                    !config.get().getDynamicWeightEnabled() &&
+                    config.get().getFixedWeight() != null) {
+                fixedWeightAllocations.add(allocation);
+            } else {
+                dynamicWeightAllocations.add(allocation);
+            }
+        }
+
+        int totalFixedWeight = fixedWeightAllocations.stream()
+                .mapToInt(WeightAllocation::getWeight)
+                .sum();
+
+        log.debug("Normalizing weights: {} fixed ({} total), {} dynamic, target = {}",
+                fixedWeightAllocations.size(), totalFixedWeight,
+                dynamicWeightAllocations.size(), targetTotal);
+
+        // Case 1: Only fixed weights
+        if (dynamicWeightAllocations.isEmpty()) {
+            if (totalFixedWeight != targetTotal) {
+                log.warn("All weights are fixed but sum to {} instead of {}. " +
+                        "Normalizing proportionally.", totalFixedWeight, targetTotal);
+                normalizeProportionally(fixedWeightAllocations, targetTotal);
+            }
+            return;
+        }
+
+        // Case 2: Fixed weights exceed or equal target
+        if (totalFixedWeight >= targetTotal) {
+            log.warn("Fixed weights ({}) >= target ({}). Setting dynamic weights to 0 and " +
+                    "normalizing fixed weights.", totalFixedWeight, targetTotal);
+
+            // Set all dynamic weights to 0
+            for (WeightAllocation allocation : dynamicWeightAllocations) {
+                allocation.setWeight(0);
+                allocation.setReason(allocation.getReason() + " [Normalized to 0: fixed weights exceed capacity]");
+            }
+
+            // Normalize fixed weights to target
+            normalizeProportionally(fixedWeightAllocations, targetTotal);
+            return;
+        }
+
+        // Case 3: Normal case - distribute remaining weight among dynamic servers
+        int remainingWeight = targetTotal - totalFixedWeight;
+
+        int totalDynamicWeight = dynamicWeightAllocations.stream()
+                .mapToInt(WeightAllocation::getWeight)
+                .sum();
+
+        if (totalDynamicWeight == 0) {
+            // All dynamic servers have 0 weight - distribute equally
+            int weightPerServer = remainingWeight / dynamicWeightAllocations.size();
+            int remainder = remainingWeight % dynamicWeightAllocations.size();
+
+            for (int i = 0; i < dynamicWeightAllocations.size(); i++) {
+                WeightAllocation allocation = dynamicWeightAllocations.get(i);
+                int weight = weightPerServer + (i < remainder ? 1 : 0);
+                allocation.setWeight(weight);
+                allocation.setReason(allocation.getReason() +
+                        String.format(" [Normalized: %d/%d available]", weight, remainingWeight));
+            }
+        } else {
+            // Distribute proportionally based on current weights
+            double scaleFactor = (double) remainingWeight / totalDynamicWeight;
+            int assignedWeight = 0;
+
+            for (int i = 0; i < dynamicWeightAllocations.size(); i++) {
+                WeightAllocation allocation = dynamicWeightAllocations.get(i);
+                int originalWeight = allocation.getWeight();
+
+                // For the last server, assign remaining weight to avoid rounding errors
+                if (i == dynamicWeightAllocations.size() - 1) {
+                    int finalWeight = remainingWeight - assignedWeight;
+                    allocation.setWeight(Math.max(0, finalWeight));
+                    allocation.setReason(allocation.getReason() +
+                            String.format(" [Normalized: %d→%d]", originalWeight, allocation.getWeight()));
+                } else {
+                    int scaledWeight = (int) Math.round(originalWeight * scaleFactor);
+                    allocation.setWeight(scaledWeight);
+                    assignedWeight += scaledWeight;
+                    allocation.setReason(allocation.getReason() +
+                            String.format(" [Normalized: %d→%d]", originalWeight, scaledWeight));
+                }
+            }
+        }
+
+        // Final verification
+        int finalTotal = activeAllocations.stream()
+                .mapToInt(WeightAllocation::getWeight)
+                .sum();
+
+        log.info("Weight normalization complete: {} active servers, total weight = {} (target: {})",
+                activeAllocations.size(), finalTotal, targetTotal);
+
+        if (finalTotal != targetTotal) {
+            log.warn("Final weight total {} does not match target {}. Difference: {}",
+                    finalTotal, targetTotal, finalTotal - targetTotal);
+        }
+    }
+
+    /**
+     * Normalize a list of allocations proportionally to a target total
+     * Used when all weights are fixed or when fixed weights exceed capacity
+     */
+    private void normalizeProportionally(List<WeightAllocation> allocations, int targetTotal) {
+        int currentTotal = allocations.stream()
+                .mapToInt(WeightAllocation::getWeight)
+                .sum();
+
+        if (currentTotal == 0) {
+            // Distribute equally
+            int weightPerServer = targetTotal / allocations.size();
+            int remainder = targetTotal % allocations.size();
+
+            for (int i = 0; i < allocations.size(); i++) {
+                WeightAllocation allocation = allocations.get(i);
+                int weight = weightPerServer + (i < remainder ? 1 : 0);
+                allocation.setWeight(weight);
+                allocation.setReason("Equal distribution: " + weight);
+            }
+            return;
+        }
+
+        double scaleFactor = (double) targetTotal / currentTotal;
+        int assignedWeight = 0;
+
+        for (int i = 0; i < allocations.size(); i++) {
+            WeightAllocation allocation = allocations.get(i);
+            int originalWeight = allocation.getWeight();
+
+            // For the last server, assign remaining to avoid rounding errors
+            if (i == allocations.size() - 1) {
+                int finalWeight = targetTotal - assignedWeight;
+                allocation.setWeight(Math.max(1, finalWeight));
+                allocation.setReason(allocation.getReason() +
+                        String.format(" [Proportionally normalized: %d→%d]", originalWeight, allocation.getWeight()));
+            } else {
+                int scaledWeight = Math.max(1, (int) Math.round(originalWeight * scaleFactor));
+                allocation.setWeight(scaledWeight);
+                assignedWeight += scaledWeight;
+                allocation.setReason(allocation.getReason() +
+                        String.format(" [Proportionally normalized: %d→%d]", originalWeight, scaledWeight));
+            }
+        }
     }
 
     private WeightScore calculateServerScore(ServerMetrics metrics) {
@@ -217,6 +422,13 @@ public class WeightCalculationService {
         }
 
         log.warn("No metrics available. Assigning default weights to {} servers", allocations.size());
+
+        // Apply fixed weights even for default weights
+        applyFixedWeights(allocations);
+
+        // Normalize to ensure sum is 100
+        normalizeWeightsToTotal(allocations, 100);
+
         return allocations;
     }
 

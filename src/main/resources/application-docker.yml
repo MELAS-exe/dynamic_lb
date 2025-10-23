@@ -51,7 +51,7 @@ loadbalancer:
     degradation: 0.15
 
   simulation:
-    enabled: true
+    enabled: false
     interval-seconds: 60
     metrics-variation: 0.2
 

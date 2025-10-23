@@ -65,9 +65,11 @@ public class NginxConfigService {
             // Generate new configuration content
             String configContent = configGenerator.generateUpstreamConfig(weights);
 
-            // Validate configuration before writing
-            if (!isValidConfiguration(configContent)) {
+            // Validate configuration before writing - USE THE GENERATOR'S VALIDATION METHOD
+            if (!configGenerator.validateGeneratedConfig(configContent)) {
                 log.error("Generated configuration is invalid. Aborting update.");
+                log.error("Failed config content preview (first 500 chars): {}",
+                        configContent != null ? configContent.substring(0, Math.min(500, configContent.length())) : "null");
                 return;
             }
 
@@ -265,25 +267,6 @@ public class NginxConfigService {
         }
     }
 
-    private boolean isValidConfiguration(String config) {
-        if (config == null || config.trim().isEmpty()) {
-            return false;
-        }
-
-        if (!config.contains("upstream")) {
-            return false;
-        }
-
-        if (!config.contains("server ")) {
-            return false;
-        }
-
-        long openBraces = config.chars().filter(ch -> ch == '{').count();
-        long closeBraces = config.chars().filter(ch -> ch == '}').count();
-
-        return openBraces == closeBraces;
-    }
-
     private void logWeightChanges(List<WeightAllocation> weights) {
         log.info("=== Weight Distribution ===");
         int totalWeight = weights.stream()
@@ -323,17 +306,25 @@ public class NginxConfigService {
     }
 
     private boolean isRunningInDocker() {
-        return System.getenv("SPRING_PROFILES_ACTIVE") != null &&
-                System.getenv("SPRING_PROFILES_ACTIVE").contains("docker");
+        try {
+            return Files.exists(Paths.get("/.dockerenv")) ||
+                    Files.exists(Paths.get("/proc/1/cgroup")) &&
+                            Files.readString(Paths.get("/proc/1/cgroup")).contains("docker");
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public boolean isNginxRunning() {
         if (isRunningInDocker()) {
-            // En Docker, on assume que NGINX tourne dans son propre conteneur
-            log.debug("Docker mode: Assuming NGINX is running in separate container");
+            // En Docker, on suppose que NGINX est géré par son propre container
             return true;
-        } else {
-            try {
+        }
+
+        try {
+            String os = System.getProperty("os.name").toLowerCase();
+
+            if (os.contains("win")) {
                 ProcessBuilder pb = new ProcessBuilder("tasklist");
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
@@ -341,22 +332,20 @@ public class NginxConfigService {
                 java.io.BufferedReader reader = new java.io.BufferedReader(
                         new java.io.InputStreamReader(process.getInputStream()));
                 String line;
-                boolean found = false;
-
                 while ((line = reader.readLine()) != null) {
                     if (line.toLowerCase().contains("nginx.exe")) {
-                        found = true;
-                        break;
+                        return true;
                     }
                 }
-
-                process.waitFor();
-                return found;
-
-            } catch (Exception e) {
-                log.debug("Error checking NGINX status: {}", e.getMessage());
                 return false;
+            } else {
+                ProcessBuilder pb = new ProcessBuilder("pgrep", "nginx");
+                Process process = pb.start();
+                return process.waitFor() == 0;
             }
+        } catch (Exception e) {
+            log.error("Error checking if NGINX is running: {}", e.getMessage());
+            return false;
         }
     }
 }
