@@ -21,6 +21,7 @@ public class MetricsCollectionService {
     private final NginxConfig nginxConfig;
     private final WeightCalculationService weightCalculationService;
     private final NginxConfigService nginxConfigService;
+    private final ServerConfigurationService serverConfigurationService;
 
     public void receiveMetrics(String serverId, ServerMetrics metrics) {
         try {

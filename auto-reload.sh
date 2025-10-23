@@ -5,7 +5,7 @@ LAST_MODIFIED=0
 CONFIG_FILE="/nginx-config/upstream.conf"
 
 while true; do
-    sleep 5
+    sleep 60
 
     if [ -f "$CONFIG_FILE" ]; then
         CURRENT_MODIFIED=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || stat -f %m "$CONFIG_FILE" 2>/dev/null || echo "0")

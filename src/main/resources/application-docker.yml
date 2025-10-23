@@ -1,7 +1,6 @@
 server:
   port: 8080
 
-
 spring:
   application:
     name: dynamic-nginx-loadbalancer
@@ -14,8 +13,15 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: update
     show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  h2:
+    console:
+      enabled: true
 
 loadbalancer:
   servers:
@@ -52,3 +58,4 @@ loadbalancer:
 logging:
   level:
     com.loadbalancer: INFO
+    org.springframework.scheduling: DEBUG

@@ -1,6 +1,7 @@
 package com.intouch.cp.lb_aip_pidirect.service;
 
 import com.intouch.cp.lb_aip_pidirect.config.NginxConfig;
+import com.intouch.cp.lb_aip_pidirect.model.ServerConfiguration;
 import com.intouch.cp.lb_aip_pidirect.model.ServerInfo;
 import com.intouch.cp.lb_aip_pidirect.model.ServerMetrics;
 import com.intouch.cp.lb_aip_pidirect.model.WeightAllocation;
@@ -17,6 +18,8 @@ import java.util.List;
 public class WeightCalculationService {
 
     private final NginxConfig nginxConfig;
+    private final ServerConfigurationService configService;
+
     private static final int MIN_WEIGHT = 1;
     private static final int MAX_WEIGHT = 100;
     private static final int DEFAULT_WEIGHT = 10;
