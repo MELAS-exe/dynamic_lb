@@ -11,7 +11,7 @@ public class ServerInfo {
 
     private String id;
     private String host;
-    private String port;
+    private String port;  // Now optional - can be null or empty
     private String name;
     private boolean enabled = true;
 
@@ -23,11 +23,46 @@ public class ServerInfo {
         this.enabled = true;
     }
 
+    /**
+     * Get the server address with optional port
+     * If port is null or empty, returns just the host
+     * Otherwise returns host:port
+     */
     public String getAddress() {
+        if (port == null || port.trim().isEmpty()) {
+            return host;
+        }
         return host + ":" + port;
     }
 
+    /**
+     * Get the full server address (same as getAddress for backward compatibility)
+     */
     public String getFullAddress() {
-        return host + ":" + port;
+        return getAddress();
+    }
+
+    /**
+     * Check if this server has a port specified
+     */
+    public boolean hasPort() {
+        return port != null && !port.trim().isEmpty();
+    }
+
+    /**
+     * Get the host without port
+     */
+    public String getHostOnly() {
+        return host;
+    }
+
+    /**
+     * Get the port or return default port
+     */
+    public String getPortOrDefault(String defaultPort) {
+        if (port == null || port.trim().isEmpty()) {
+            return defaultPort;
+        }
+        return port;
     }
 }

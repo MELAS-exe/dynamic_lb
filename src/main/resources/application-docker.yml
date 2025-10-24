@@ -26,17 +26,13 @@ spring:
 loadbalancer:
   servers:
     - id: server1
-      host: backend-a-971441253898.europe-west1.run.app
-      port: 443
+      host: pi-gateway-kcop3cwgaq-ew.a.run.app/ci/api/v1
+      port:
       name: "Backend Server 1"
     - id: server2
-      host: backend-b-971441253898.europe-west1.run.app
-      port: 443
+      host: qlf-agentapi-eme.gutouch.net/pda/pi
+      port:
       name: "Backend Server 2"
-    - id: server3
-      host: backend-c-971441253898.europe-west1.run.app
-      port: 443
-      name: "Backend Server 3"
 
   nginx:
     config-path: "/nginx-config/upstream.conf"
