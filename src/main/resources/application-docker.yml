@@ -35,7 +35,8 @@ loadbalancer:
       name: "Backend Server 2"
 
   nginx:
-    config-path: "/nginx-config/upstream.conf"
+    config-dir: "/nginx-config"
+    config-file: "upstream.conf"
     reload-command: "nginx -s reload"
     upstream-name: "backend"
 

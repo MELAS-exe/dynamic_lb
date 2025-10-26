@@ -5,6 +5,7 @@ import com.intouch.cp.lb_aip_pidirect.model.WeightAllocation;
 import com.intouch.cp.lb_aip_pidirect.util.NginxConfigGenerator;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -22,6 +23,11 @@ public class NginxConfigService {
     private final NginxConfig nginxConfig;
     private final NginxConfigGenerator configGenerator;
 
+    @Value("${loadbalancer.nginx.config-dir}")
+    private String nginxConfigDir;
+
+    private Path nginxDir;
+
     public NginxConfigService(NginxConfig nginxConfig, NginxConfigGenerator configGenerator) {
         this.nginxConfig = nginxConfig;
         this.configGenerator = configGenerator;
@@ -30,6 +36,12 @@ public class NginxConfigService {
     @PostConstruct
     public void init() {
         log.info("=== Initializing NGINX Configuration Service ===");
+        if (nginxConfigDir != null && !nginxConfigDir.isEmpty()) {
+            this.nginxDir = Paths.get(nginxConfigDir);
+            log.info("Nginx directory initialized: {}", nginxDir);
+        } else {
+            log.error("Nginx config directory not configured in application.yaml");
+        }
 
         if (isRunningInDocker()) {
             log.info("Running in Docker mode - NGINX managed by separate container");
@@ -157,10 +169,19 @@ public class NginxConfigService {
             String reloadCmd = nginxConfig.getNginx().getReloadCommand();
             String nginxPath = reloadCmd.split(" ")[0];
             Path nginxExePath = Paths.get(nginxPath);
-            Path nginxDir = nginxExePath.getParent();
+            log.info("The problematic line --------> nginxExePath: " + nginxExePath.toString());
+
+            Path nginxExecutableDir = nginxExePath.getParent();
+            log.info("the problematic line --------> nginxExecutableDir: " +
+                    (nginxExecutableDir != null ? nginxExecutableDir.toString() : "null"));
 
             ProcessBuilder pb = new ProcessBuilder(nginxPath, "-t");
-            pb.directory(nginxDir.toFile());
+
+            // Only set directory if parent exists
+            if (nginxExecutableDir != null) {
+                pb.directory(nginxExecutableDir.toFile());
+            }
+
             pb.redirectErrorStream(true);
 
             Process process = pb.start();
