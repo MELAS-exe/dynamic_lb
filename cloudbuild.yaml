@@ -20,7 +20,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest']
 
-  # Step 4: Deploy to Cloud Run
+  # Step 4: Deploy to Cloud Run (single instance)
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - 'run'
@@ -42,14 +42,14 @@ steps:
       - '--min-instances'
       - '1'
       - '--max-instances'
-      - '10'
+      - '1'  # ⚠️ Force a single instance //TODO change strategy et implementer un stockage commun
       - '--timeout'
       - '300'
       - '--cpu-boost'
       - '--concurrency'
-      - '1000'  # Increased since NGINX can handle many connections
+      - '1000'
       - '--port'
-      - '80'  # Changed to port 80 for NGINX
+      - '80'
       - '--set-env-vars'
       - 'SERVICE_NAME=${_SERVICE_NAME},SPRING_PROFILES_ACTIVE=docker'
       - '--execution-environment'

@@ -23,11 +23,6 @@ public class NginxConfigService {
     private final NginxConfig nginxConfig;
     private final NginxConfigGenerator configGenerator;
 
-    @Value("${loadbalancer.nginx.config-dir}")
-    private String nginxConfigDir;
-
-    private Path nginxDir;
-
     public NginxConfigService(NginxConfig nginxConfig, NginxConfigGenerator configGenerator) {
         this.nginxConfig = nginxConfig;
         this.configGenerator = configGenerator;
@@ -36,12 +31,6 @@ public class NginxConfigService {
     @PostConstruct
     public void init() {
         log.info("=== Initializing NGINX Configuration Service ===");
-        if (nginxConfigDir != null && !nginxConfigDir.isEmpty()) {
-            this.nginxDir = Paths.get(nginxConfigDir);
-            log.info("Nginx directory initialized: {}", nginxDir);
-        } else {
-            log.error("Nginx config directory not configured in application.yaml");
-        }
 
         if (isRunningInDocker()) {
             log.info("Running in Docker mode - NGINX managed by separate container");

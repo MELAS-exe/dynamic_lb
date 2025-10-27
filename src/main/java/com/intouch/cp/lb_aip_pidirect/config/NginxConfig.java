@@ -19,10 +19,22 @@ public class NginxConfig {
 
     @Data
     public static class NginxSettings {
-        private String configPath;
-        private String templatePath;
+        private String configDir;
+        private String configFile;
         private String reloadCommand;
         private String upstreamName;
+
+        // Computed property that combines configDir and configFile
+        public String getConfigPath() {
+            if (configDir == null || configFile == null) {
+                return null;
+            }
+            // Ensure proper path separator
+            if (configDir.endsWith("/")) {
+                return configDir + configFile;
+            }
+            return configDir + "/" + configFile;
+        }
     }
 
     @Data
