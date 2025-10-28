@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamic-loadbalancer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: dynamic-loadbalancer
+  template:
+    metadata:
+      labels:
+        app: dynamic-loadbalancer
+    spec:
+      containers:
+        - name: dynamic-loadbalancer
+          image: europe-west1-docker.pkg.dev/PROJECT_ID/loadbalancer-sandbox/dynamic-loadbalancer:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dynamic-loadbalancer
+spec:
+  type: LoadBalancer
+  selector:
+    app: dynamic-loadbalancer
+  ports:
+    - port: 80
+      targetPort: 8080
