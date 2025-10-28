@@ -10,44 +10,61 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
+/**
+ * Enhanced MetricsCollectionService with Redis integration for shared state
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class MetricsCollectionService {
 
     private final ServerMetricsRepository metricsRepository;
-    private final NginxConfig nginxConfig;
     private final WeightCalculationService weightCalculationService;
     private final NginxConfigService nginxConfigService;
-    private final ServerConfigurationService serverConfigurationService;
+    private final NginxConfig nginxConfig;
+    private final RedisStateService redisStateService;
 
-    public void receiveMetrics(String serverId, ServerMetrics metrics) {
+    /**
+     * Process incoming metrics and store in both database and Redis
+     */
+    @Transactional
+    public void processMetrics(String serverId, ServerMetrics metrics) {
         try {
-            log.debug("Received metrics for server: {}", serverId);
+            log.debug("Processing metrics for server: {}", serverId);
 
-            // Validate server exists in configuration
-            if (nginxConfig.getServerById(serverId) == null) {
-                log.warn("Received metrics for unknown server: {}", serverId);
-                return;
+            if (metrics.getServerId() == null || metrics.getServerId().isEmpty()) {
+                metrics.setServerId(serverId);
             }
 
-            // Set server ID and timestamp
-            metrics.setServerId(serverId);
-            metrics.setCreatedAt(LocalDateTime.now());
+            if (!serverId.equals(metrics.getServerId())) {
+                log.warn("ServerId mismatch. URL: {}, Metrics: {}. Using URL serverId.",
+                        serverId, metrics.getServerId());
+                metrics.setServerId(serverId);
+            }
 
-            // Validate metrics
-            if (!isValidMetrics(metrics)) {
-                log.warn("Invalid metrics received for server: {}", serverId);
+            if (metrics.getCreatedAt() == null) {
+                metrics.setCreatedAt(LocalDateTime.now());
+            }
+
+            if (nginxConfig.getServerById(serverId) == null) {
+                log.warn("Metrics received for unknown server: {}", serverId);
                 return;
             }
 
             // Calculate EWMA latency based on previous metrics
             calculateEwmaLatency(serverId, metrics);
 
-            // Save metrics
+            // Save metrics to database
             metricsRepository.save(metrics);
+
+            // Store metrics in Redis for shared access
+            redisStateService.storeMetrics(serverId, metrics);
+
             log.debug("Metrics saved for server: {} at {} (EWMA: {}ms, Instant: {}ms)",
                     serverId,
                     metrics.getCreatedAt(),
@@ -63,19 +80,22 @@ public class MetricsCollectionService {
     }
 
     /**
-     * Calcule la latence EWMA pour les nouvelles métriques
-     * Lt = α * Mt + (1 - α) * Lt-1
+     * Calculate EWMA latency: Lt = α * Mt + (1 - α) * Lt-1
      */
     private void calculateEwmaLatency(String serverId, ServerMetrics currentMetrics) {
-        // Récupérer les métriques précédentes pour ce serveur
-        var previousMetrics = metricsRepository.findFirstByServerIdOrderByCreatedAtDesc(serverId);
+        // Try to get previous metrics from Redis first
+        Optional<ServerMetrics> previousMetrics = redisStateService.getMetrics(serverId);
+
+        // Fallback to database if not in Redis
+        if (previousMetrics.isEmpty()) {
+            previousMetrics = metricsRepository.findFirstByServerIdOrderByCreatedAtDesc(serverId);
+        }
 
         Double previousEwma = null;
         if (previousMetrics.isPresent()) {
             previousEwma = previousMetrics.get().getEwmaLatencyMs();
         }
 
-        // Calculer la nouvelle EWMA
         currentMetrics.calculateEwmaLatency(previousEwma);
 
         if (previousEwma != null) {
@@ -90,14 +110,24 @@ public class MetricsCollectionService {
         }
     }
 
+    /**
+     * Scheduled task to process metrics and update weights
+     * Uses Redis lock to ensure only one instance performs the update
+     */
     @Scheduled(fixedRateString = "#{${loadbalancer.simulation.interval-seconds:60} * 1000}")
     @Transactional
     public void processMetricsAndUpdateWeights() {
+        // Try to acquire lock for weight calculation
+        if (!redisStateService.acquireLock("weight-calculation", 30)) {
+            log.debug("Another instance is calculating weights, skipping");
+            return;
+        }
+
         try {
             log.debug("Processing metrics and updating weights");
 
-            // Get latest metrics for all servers
-            List<ServerMetrics> latestMetrics = metricsRepository.findLatestMetricsForAllServers();
+            // Get latest metrics from Redis (shared across instances)
+            List<ServerMetrics> latestMetrics = getLatestMetricsForAllServers();
 
             if (latestMetrics.isEmpty()) {
                 log.warn("No metrics available for weight calculation");
@@ -132,6 +162,9 @@ public class MetricsCollectionService {
             // Calculate new weights
             var weightAllocations = weightCalculationService.calculateWeights(freshMetrics);
 
+            // Store weights in Redis
+            redisStateService.storeWeights(weightAllocations);
+
             // Update NGINX configuration
             nginxConfigService.updateUpstreamConfiguration(weightAllocations);
 
@@ -140,17 +173,51 @@ public class MetricsCollectionService {
 
         } catch (Exception e) {
             log.error("Error during metrics processing and weight update: {}", e.getMessage(), e);
+        } finally {
+            // Always release the lock
+            redisStateService.releaseLock("weight-calculation");
         }
     }
 
+    /**
+     * Get latest metrics for all servers from Redis
+     */
+    public List<ServerMetrics> getLatestMetricsForAllServers() {
+        try {
+            // Get all metrics from Redis
+            Map<String, ServerMetrics> metricsMap = redisStateService.getAllMetrics();
+
+            if (!metricsMap.isEmpty()) {
+                log.debug("Retrieved {} metrics from Redis", metricsMap.size());
+                return new ArrayList<>(metricsMap.values());
+            }
+
+            // Fallback to database if Redis is empty
+            log.debug("Redis metrics empty, falling back to database");
+            return metricsRepository.findLatestMetricsForAllServers();
+        } catch (Exception e) {
+            log.error("Error retrieving latest metrics: {}", e.getMessage(), e);
+            return metricsRepository.findLatestMetricsForAllServers();
+        }
+    }
+
+    /**
+     * Trigger weight recalculation if sufficient recent metrics are available
+     */
     private void triggerWeightRecalculationIfReady() {
-        // Check if we have recent metrics from all configured servers
         List<String> serverIds = nginxConfig.getServerIds();
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(2);
 
         long serversWithRecentMetrics = serverIds.stream()
                 .mapToLong(serverId -> {
-                    var metrics = metricsRepository.findFirstByServerIdOrderByCreatedAtDesc(serverId);
+                    // Check Redis first
+                    Optional<ServerMetrics> metrics = redisStateService.getMetrics(serverId);
+
+                    // Fallback to database
+                    if (metrics.isEmpty()) {
+                        metrics = metricsRepository.findFirstByServerIdOrderByCreatedAtDesc(serverId);
+                    }
+
                     return metrics.map(m -> m.getCreatedAt().isAfter(cutoff) ? 1L : 0L).orElse(0L);
                 })
                 .sum();
@@ -161,106 +228,37 @@ public class MetricsCollectionService {
         }
     }
 
+    /**
+     * Cleanup old metrics from both database and Redis
+     */
     @Scheduled(cron = "0 0 2 * * ?")
     @Transactional
     public void cleanupOldMetrics() {
         try {
-            log.info("Starting metrics cleanup");
-
             LocalDateTime cutoff = LocalDateTime.now().minusDays(7);
-            List<ServerMetrics> oldMetrics = metricsRepository.findByCreatedAtBefore(cutoff);
+            int deleted = metricsRepository.deleteByCreatedAtBefore(cutoff);
 
-            if (!oldMetrics.isEmpty()) {
-                metricsRepository.deleteByCreatedAtBefore(cutoff);
-                log.info("Cleaned up {} old metric records", oldMetrics.size());
-            } else {
-                log.debug("No old metrics to clean up");
-            }
+            // Cleanup Redis metrics
+            redisStateService.cleanupOldMetrics();
 
+            log.info("Cleanup completed: {} database records older than 7 days deleted", deleted);
         } catch (Exception e) {
             log.error("Error during metrics cleanup: {}", e.getMessage(), e);
         }
     }
 
-    public List<ServerMetrics> getLatestMetricsForAllServers() {
-        return metricsRepository.findLatestMetricsForAllServers();
-    }
+    /**
+     * Get server metrics from Redis or database
+     */
+    public Optional<ServerMetrics> getServerMetrics(String serverId) {
+        // Try Redis first
+        Optional<ServerMetrics> metrics = redisStateService.getMetrics(serverId);
 
-    public List<ServerMetrics> getMetricsForServer(String serverId) {
-        return metricsRepository.findByServerIdOrderByCreatedAtDesc(serverId);
-    }
-
-    public List<ServerMetrics> getMetricsForServerInTimeRange(String serverId,
-                                                              LocalDateTime start,
-                                                              LocalDateTime end) {
-        return metricsRepository.findByServerIdAndCreatedAtBetweenOrderByCreatedAtDesc(
-                serverId, start, end);
-    }
-
-    private boolean isValidMetrics(ServerMetrics metrics) {
-        if (metrics == null) return false;
-
-        if (metrics.getAvgResponseTimeMs() == null || metrics.getAvgResponseTimeMs() < 0) {
-            log.warn("Invalid avgResponseTimeMs: {}", metrics.getAvgResponseTimeMs());
-            return false;
+        // Fallback to database
+        if (metrics.isEmpty()) {
+            metrics = metricsRepository.findFirstByServerIdOrderByCreatedAtDesc(serverId);
         }
 
-        if (metrics.getErrorRatePercentage() == null ||
-                metrics.getErrorRatePercentage() < 0 ||
-                metrics.getErrorRatePercentage() > 100) {
-            log.warn("Invalid errorRatePercentage: {}", metrics.getErrorRatePercentage());
-            return false;
-        }
-
-        if (metrics.getSuccessRatePercentage() == null ||
-                metrics.getSuccessRatePercentage() < 0 ||
-                metrics.getSuccessRatePercentage() > 100) {
-            log.warn("Invalid successRatePercentage: {}", metrics.getSuccessRatePercentage());
-            return false;
-        }
-
-        if (metrics.getTimeoutRatePercentage() == null ||
-                metrics.getTimeoutRatePercentage() < 0 ||
-                metrics.getTimeoutRatePercentage() > 100) {
-            log.warn("Invalid timeoutRatePercentage: {}", metrics.getTimeoutRatePercentage());
-            return false;
-        }
-
-        if (metrics.getUptimePercentage() == null ||
-                metrics.getUptimePercentage() < 0 ||
-                metrics.getUptimePercentage() > 100) {
-            log.warn("Invalid uptimePercentage: {}", metrics.getUptimePercentage());
-            return false;
-        }
-
-        if (metrics.getLatencyP50() != null && metrics.getLatencyP50() < 0) {
-            log.warn("Invalid latencyP50: {}", metrics.getLatencyP50());
-            return false;
-        }
-
-        if (metrics.getLatencyP95() != null && metrics.getLatencyP95() < 0) {
-            log.warn("Invalid latencyP95: {}", metrics.getLatencyP95());
-            return false;
-        }
-
-        if (metrics.getLatencyP99() != null && metrics.getLatencyP99() < 0) {
-            log.warn("Invalid latencyP99: {}", metrics.getLatencyP99());
-            return false;
-        }
-
-        if (metrics.getRequestsPerMinute() != null && metrics.getRequestsPerMinute() < 0) {
-            log.warn("Invalid requestsPerMinute: {}", metrics.getRequestsPerMinute());
-            return false;
-        }
-
-        return true;
-    }
-
-    public long getMetricsCount() {
-        return metricsRepository.count();
-    }
-
-    public long getMetricsCountForServer(String serverId) {
-        return metricsRepository.countByServerId(serverId);
+        return metrics;
     }
 }

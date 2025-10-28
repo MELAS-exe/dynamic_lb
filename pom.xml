@@ -13,48 +13,75 @@
     </parent>
 
     <groupId>com.intouch.cp</groupId>
-    <artifactId>lb_aip_pi-direct</artifactId>
+    <artifactId>lb-aip-pi-direct</artifactId>
     <version>1.0.0</version>
-    <name>dynamic-nginx-loadbalancer</name>
-    <description>Dynamic NGINX Load Balancer with Redis State Management</description>
+    <name>Dynamic NGINX Load Balancer</name>
+    <description>Dynamic load balancer with Redis state management</description>
 
     <properties>
         <java.version>17</java.version>
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Starters -->
+        <!-- Spring Boot Web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- Spring Boot Data JPA -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
-        <!-- Redis Dependencies -->
+        <!-- Spring Boot Redis -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- Lettuce (Redis client) -->
         <dependency>
-            <groupId>redis.clients</groupId>
-            <artifactId>jedis</artifactId>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
         </dependency>
 
+        <!-- Spring Boot Cache -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-cache</artifactId>
         </dependency>
 
-        <!-- H2 Database (for local fallback if needed) -->
+        <!-- Spring Boot Validation -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Actuator -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- H2 Database -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Jackson for JSON -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Jackson Java Time Module -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
         <!-- Lombok -->
@@ -64,36 +91,14 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Validation -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-
-        <!-- Actuator for health checks -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-
-        <!-- JSON Processing -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-        </dependency>
-
-        <!-- Test Dependencies -->
+        <!-- Spring Boot Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
 
+        <!-- Embedded Redis for testing -->
         <dependency>
             <groupId>it.ozimov</groupId>
             <artifactId>embedded-redis</artifactId>

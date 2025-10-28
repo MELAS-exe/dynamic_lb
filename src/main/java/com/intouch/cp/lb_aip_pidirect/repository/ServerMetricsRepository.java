@@ -47,5 +47,5 @@ public interface ServerMetricsRepository extends JpaRepository<ServerMetrics, Lo
     Long countByServerId(String serverId);
 
     // Delete old metrics (cleanup)
-    void deleteByCreatedAtBefore(LocalDateTime cutoffTime);
+    int deleteByCreatedAtBefore(LocalDateTime cutoffTime);
 }

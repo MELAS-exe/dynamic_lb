@@ -21,32 +21,23 @@ services:
 
   # Load Balancer Instance 1
   loadbalancer1:
-    build: .
+    image: dynamic-loadbalancer:latest
     container_name: loadbalancer-app-1
     ports:
-      - "8091:8090"
+      - "81:80"  # Nginx
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - INSTANCE_ID=lb-instance-1
-    volumes:
-      - nginx-config:/nginx-config
+      - JAVA_OPTS=-Xmx512m -Xms256m
     networks:
       - loadbalancer-network
     depends_on:
       redis:
         condition: service_healthy
-      nginx:
-        condition: service_started
-      backend1:
-        condition: service_started
-      backend2:
-        condition: service_started
-      backend3:
-        condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/loadbalancer/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/nginx-health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -55,67 +46,33 @@ services:
 
   # Load Balancer Instance 2
   loadbalancer2:
-    build: .
+    image: dynamic-loadbalancer:latest
     container_name: loadbalancer-app-2
     ports:
-      - "8092:8090"
+      - "82:80"  # Nginx
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - INSTANCE_ID=lb-instance-2
-    volumes:
-      - nginx-config:/nginx-config
+      - JAVA_OPTS=-Xmx512m -Xms256m
     networks:
       - loadbalancer-network
     depends_on:
       redis:
         condition: service_healthy
-      nginx:
-        condition: service_started
-      backend1:
-        condition: service_started
-      backend2:
-        condition: service_started
-      backend3:
-        condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/loadbalancer/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/nginx-health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     restart: unless-stopped
 
-  # NGINX Load Balancer
-  nginx:
-    build: ./nginx
-    container_name: nginx-lb
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - nginx-config:/etc/nginx/conf.d
-      - nginx-logs:/var/log/nginx
-    networks:
-      - loadbalancer-network
-    depends_on:
-      - backend1
-      - backend2
-      - backend3
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/nginx-health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
 networks:
   loadbalancer-network:
     driver: bridge
 
 volumes:
-  nginx-config:
-  nginx-logs:
   redis-data:
+    driver: local

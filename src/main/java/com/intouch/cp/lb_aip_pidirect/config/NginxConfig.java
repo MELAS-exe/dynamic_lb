@@ -16,6 +16,38 @@ public class NginxConfig {
     private NginxSettings nginx;
     private WeightFactors weightFactors;
     private SimulationSettings simulation;
+    private RedisSettings redis;
+
+
+    @Data
+    public static class RedisSettings {
+        private RedisKeys keys;
+        private RedisTtl ttl;
+        private RedisIntervals intervals;
+    }
+
+    @Data
+    public static class RedisKeys {
+        private String metricsPrefix;
+        private String configPrefix;
+        private String weightsPrefix;
+        private String nginxConfigKey;
+        private String lastUpdateKey;
+    }
+
+    @Data
+    public static class RedisTtl {
+        private Integer metrics;
+        private Integer config;
+        private Integer weights;
+        private Integer nginxConfig;
+    }
+
+    @Data
+    public static class RedisIntervals {
+        private Long configSync;
+        private Long metricsCleanup;
+    }
 
     @Data
     public static class NginxSettings {
@@ -61,6 +93,14 @@ public class NginxConfig {
         private Boolean enabled;
         private Integer intervalSeconds;
         private Double metricsVariation;
+    }
+
+    @Data
+    public static class ServerConfig {
+        private String id;
+        private String host;
+        private Integer port;
+        private String name;
     }
 
     // Helper methods

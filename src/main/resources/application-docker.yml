@@ -1,14 +1,14 @@
 server:
-  port: 8080
+  port: 8090
 
 spring:
   application:
     name: dynamic-nginx-loadbalancer
 
-  # Redis Configuration
+  # Redis Configuration for Docker
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 10000
@@ -18,7 +18,6 @@ spring:
           max-idle: 10
           min-idle: 5
           max-wait: 2000
-      # Enable connection validation
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
 
@@ -30,16 +29,24 @@ spring:
       cache-null-values: false
       key-prefix: "loadbalancer:"
 
+# Load Balancer Configuration for Docker
 loadbalancer:
   servers:
     - id: server1
-      host: pi-gateway-kcop3cwgaq-ew.a.run.app/ci/api/v1
-      port:
+      host: backend1
+      port: 8080
       name: "Backend Server 1"
+      enabled: true
     - id: server2
-      host: qlf-agentapi-eme.gutouch.net/pda/pi
-      port:
+      host: backend2
+      port: 8080
       name: "Backend Server 2"
+      enabled: true
+    - id: server3
+      host: backend3
+      port: 8080
+      name: "Backend Server 3"
+      enabled: true
 
   nginx:
     config-dir: "/nginx-config"
@@ -54,25 +61,28 @@ loadbalancer:
     uptime: 0.20
     degradation: 0.15
 
+  # Redis State Management Configuration
   redis:
-    # Keys configuration
     keys:
       metrics-prefix: "metrics:"
       config-prefix: "config:"
       weights-prefix: "weights:"
       nginx-config-key: "nginx:current-config"
       last-update-key: "nginx:last-update"
+      instance-prefix: "instance:"
+      lock-prefix: "lock:"
 
-    # TTL configuration (in seconds)
     ttl:
       metrics: 600          # 10 minutes
       config: 3600          # 1 hour
       weights: 300          # 5 minutes
       nginx-config: 1800    # 30 minutes
+      instance-heartbeat: 60 # 1 minute
 
     intervals:
       config-sync: 10000    # Sync config every 10 seconds
       metrics-cleanup: 60000 # Cleanup old metrics every minute
+      heartbeat: 30000      # Heartbeat every 30 seconds
 
   simulation:
     enabled: false
@@ -81,6 +91,7 @@ loadbalancer:
 
 logging:
   level:
-    com.loadbalancer: INFO
+    root: INFO
+    com.intouch.cp.lb_aip_pidirect: INFO
     org.springframework.data.redis: DEBUG
     io.lettuce.core: INFO

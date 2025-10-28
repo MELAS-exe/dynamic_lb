@@ -3,9 +3,7 @@ package com.intouch.cp.lb_aip_pidirect.controller;
 import com.intouch.cp.lb_aip_pidirect.config.NginxConfig;
 import com.intouch.cp.lb_aip_pidirect.model.ServerMetrics;
 import com.intouch.cp.lb_aip_pidirect.model.WeightAllocation;
-import com.intouch.cp.lb_aip_pidirect.service.MetricsCollectionService;
-import com.intouch.cp.lb_aip_pidirect.service.NginxConfigService;
-import com.intouch.cp.lb_aip_pidirect.service.WeightCalculationService;
+import com.intouch.cp.lb_aip_pidirect.service.*;
 import com.intouch.cp.lb_aip_pidirect.util.NginxConfigGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +16,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Enhanced LoadBalancerController with Redis state management endpoints
+ */
 @RestController
 @RequestMapping("/api/loadbalancer")
 @RequiredArgsConstructor
@@ -29,18 +30,50 @@ public class LoadBalancerController {
     private final MetricsCollectionService metricsCollectionService;
     private final NginxConfigGenerator configGenerator;
     private final NginxConfig nginxConfig;
+    private final RedisStateService redisStateService;
+    private final InstanceHeartbeatService heartbeatService;
 
     /**
-     * Get current weight allocations
+     * Health check endpoint
+     */
+    @GetMapping("/health")
+    public ResponseEntity<Map<String, Object>> health() {
+        Map<String, Object> health = new HashMap<>();
+        health.put("status", "UP");
+        health.put("instance", heartbeatService.getInstanceId());
+        health.put("timestamp", LocalDateTime.now());
+        health.put("redisHealthy", redisStateService.isHealthy());
+
+        return ResponseEntity.ok(health);
+    }
+
+    /**
+     * Get current weight allocations from Redis
      */
     @GetMapping("/weights")
-    public ResponseEntity<List<WeightAllocation>> getCurrentWeights() {
+    public ResponseEntity<Map<String, Object>> getCurrentWeights() {
         log.debug("Fetching current weight allocations");
 
-        List<ServerMetrics> latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
-        List<WeightAllocation> weights = weightCalculationService.calculateWeights(latestMetrics);
+        Map<String, Object> response = new HashMap<>();
 
-        return ResponseEntity.ok(weights);
+        // Try to get weights from Redis first
+        var redisWeights = redisStateService.getWeights();
+
+        if (redisWeights.isPresent()) {
+            response.put("source", "redis");
+            response.put("weights", redisWeights.get());
+        } else {
+            // Calculate fresh weights if not in Redis
+            List<ServerMetrics> latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
+            List<WeightAllocation> weights = weightCalculationService.calculateWeights(latestMetrics);
+            response.put("source", "calculated");
+            response.put("weights", weights);
+        }
+
+        response.put("instance", heartbeatService.getInstanceId());
+        response.put("timestamp", LocalDateTime.now());
+
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -48,7 +81,8 @@ public class LoadBalancerController {
      */
     @PostMapping("/weights/recalculate")
     public ResponseEntity<Map<String, Object>> recalculateWeights() {
-        log.info("Manual weight recalculation triggered");
+        log.info("Manual weight recalculation triggered by instance: {}",
+                heartbeatService.getInstanceId());
 
         try {
             List<ServerMetrics> latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
@@ -58,16 +92,23 @@ public class LoadBalancerController {
                 response.put("status", "warning");
                 response.put("message", "No metrics available for weight calculation");
                 response.put("timestamp", LocalDateTime.now());
+                response.put("instance", heartbeatService.getInstanceId());
                 return ResponseEntity.ok(response);
             }
 
             List<WeightAllocation> weights = weightCalculationService.calculateWeights(latestMetrics);
+
+            // Store in Redis
+            redisStateService.storeWeights(weights);
+
+            // Update local Nginx
             nginxConfigService.updateUpstreamConfiguration(weights);
 
             Map<String, Object> response = new HashMap<>();
             response.put("status", "success");
-            response.put("message", "Weights recalculated and NGINX updated");
+            response.put("message", "Weights recalculated and stored in Redis");
             response.put("timestamp", LocalDateTime.now());
+            response.put("instance", heartbeatService.getInstanceId());
             response.put("weightsCalculated", weights.size());
             response.put("activeServers", weights.stream().mapToInt(w -> w.isActive() ? 1 : 0).sum());
             response.put("weights", weights);
@@ -81,6 +122,7 @@ public class LoadBalancerController {
             response.put("status", "error");
             response.put("message", "Failed to recalculate weights: " + e.getMessage());
             response.put("timestamp", LocalDateTime.now());
+            response.put("instance", heartbeatService.getInstanceId());
 
             return ResponseEntity.badRequest().body(response);
         }
@@ -103,56 +145,81 @@ public class LoadBalancerController {
     }
 
     /**
-     * Generate and preview NGINX configuration without applying it
+     * Force sync configuration from Redis
      */
-    @GetMapping(value = "/nginx/config/preview", produces = MediaType.TEXT_PLAIN_VALUE)
-    public ResponseEntity<String> previewNginxConfig() {
-        log.debug("Generating preview of NGINX configuration");
+    @PostMapping("/nginx/sync")
+    public ResponseEntity<Map<String, Object>> syncFromRedis() {
+        log.info("Manual configuration sync from Redis triggered by instance: {}",
+                heartbeatService.getInstanceId());
 
-        try {
-            List<ServerMetrics> latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
-            List<WeightAllocation> weights = weightCalculationService.calculateWeights(latestMetrics);
-            String config = configGenerator.generateUpstreamConfig(weights);
+        Map<String, Object> response = new HashMap<>();
 
-            return ResponseEntity.ok(config);
+        boolean success = nginxConfigService.forceRefreshFromRedis();
 
-        } catch (Exception e) {
-            log.error("Error generating configuration preview: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Error generating configuration: " + e.getMessage());
-        }
+        response.put("status", success ? "success" : "error");
+        response.put("message", success ? "Configuration synced from Redis" : "Failed to sync configuration");
+        response.put("timestamp", LocalDateTime.now());
+        response.put("instance", heartbeatService.getInstanceId());
+        response.put("inSync", nginxConfigService.isInSyncWithRedis());
+
+        return ResponseEntity.ok(response);
     }
 
     /**
-     * Get configuration summary
+     * Get Redis state information
      */
-    @GetMapping("/nginx/config/summary")
-    public ResponseEntity<String> getConfigSummary() {
-        log.debug("Generating configuration summary");
+    @GetMapping("/redis/state")
+    public ResponseEntity<Map<String, Object>> getRedisState() {
+        log.debug("Fetching Redis state information");
 
-        try {
-            List<ServerMetrics> latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
-            List<WeightAllocation> weights = weightCalculationService.calculateWeights(latestMetrics);
-            String summary = configGenerator.generateConfigSummary(weights);
+        Map<String, Object> state = new HashMap<>();
 
-            return ResponseEntity.ok(summary);
+        state.put("healthy", redisStateService.isHealthy());
+        state.put("activeInstances", redisStateService.getActiveInstances());
+        state.put("currentInstance", heartbeatService.getInstanceId());
+        state.put("weightsAvailable", redisStateService.getWeights().isPresent());
+        state.put("configAvailable", redisStateService.getNginxConfig().isPresent());
+        state.put("lastConfigUpdate", redisStateService.getLastNginxUpdateTime().orElse(null));
+        state.put("localConfigSync", nginxConfigService.isInSyncWithRedis());
+        state.put("timestamp", LocalDateTime.now());
 
-        } catch (Exception e) {
-            log.error("Error generating configuration summary: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Error generating summary: " + e.getMessage());
-        }
+        // Get metrics count
+        Map<String, ServerMetrics> metrics = redisStateService.getAllMetrics();
+        state.put("metricsInRedis", metrics.size());
+
+        return ResponseEntity.ok(state);
     }
 
     /**
-     * Check NGINX status
+     * Get instance information
      */
-    @GetMapping("/nginx/status")
-    public ResponseEntity<Map<String, Object>> getNginxStatus() {
-        log.debug("Checking NGINX status");
+    @GetMapping("/instances")
+    public ResponseEntity<Map<String, Object>> getInstancesInfo() {
+        Map<String, Object> info = new HashMap<>();
+
+        info.put("currentInstance", heartbeatService.getInstanceId());
+        info.put("activeInstances", heartbeatService.getActiveInstances());
+        info.put("instanceCount", heartbeatService.getActiveInstances().size());
+        info.put("timestamp", LocalDateTime.now());
+
+        return ResponseEntity.ok(info);
+    }
+
+    /**
+     * Get load balancer status
+     */
+    @GetMapping("/status")
+    public ResponseEntity<Map<String, Object>> getStatus() {
+        log.debug("Fetching load balancer status");
 
         Map<String, Object> status = new HashMap<>();
-        status.put("isRunning", nginxConfigService.isNginxRunning());
+        status.put("instance", heartbeatService.getInstanceId());
+        status.put("activeInstances", heartbeatService.getActiveInstances().size());
+        status.put("serverCount", nginxConfig.getServerCount());
         status.put("configPath", nginxConfig.getNginx().getConfigPath());
         status.put("upstreamName", nginxConfig.getNginx().getUpstreamName());
+        status.put("redisHealthy", redisStateService.isHealthy());
+        status.put("configInSync", nginxConfigService.isInSyncWithRedis());
         status.put("timestamp", LocalDateTime.now());
 
         return ResponseEntity.ok(status);
@@ -170,6 +237,7 @@ public class LoadBalancerController {
         config.put("nginx", nginxConfig.getNginx());
         config.put("weightFactors", nginxConfig.getWeightFactors());
         config.put("simulation", nginxConfig.getSimulation());
+        config.put("instance", heartbeatService.getInstanceId());
 
         return ResponseEntity.ok(config);
     }
@@ -183,6 +251,7 @@ public class LoadBalancerController {
 
         Map<String, Object> validation = new HashMap<>();
         validation.put("timestamp", LocalDateTime.now());
+        validation.put("instance", heartbeatService.getInstanceId());
 
         // Validate weight factors
         boolean factorsValid = nginxConfig.hasValidWeightFactors();
@@ -212,79 +281,43 @@ public class LoadBalancerController {
     }
 
     /**
-     * Test NGINX configuration without applying
+     * Get metrics for all servers
      */
-    @PostMapping("/nginx/test")
-    public ResponseEntity<Map<String, Object>> testNginxConfiguration() {
-        log.info("Testing NGINX configuration");
+    @GetMapping("/metrics")
+    public ResponseEntity<Map<String, Object>> getAllMetrics() {
+        Map<String, Object> response = new HashMap<>();
 
-        Map<String, Object> result = new HashMap<>();
+        Map<String, ServerMetrics> metrics = redisStateService.getAllMetrics();
 
-        try {
-            // Generate current configuration
-            List<ServerMetrics> latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
-            List<WeightAllocation> weights = weightCalculationService.calculateWeights(latestMetrics);
-            String config = configGenerator.generateUpstreamConfig(weights);
+        response.put("metrics", metrics);
+        response.put("serverCount", metrics.size());
+        response.put("instance", heartbeatService.getInstanceId());
+        response.put("timestamp", LocalDateTime.now());
 
-            // Validate generated config
-            boolean valid = configGenerator.validateGeneratedConfig(config);
-
-            result.put("status", valid ? "success" : "error");
-            result.put("configurationValid", valid);
-            result.put("timestamp", LocalDateTime.now());
-            result.put("serversInConfig", weights.size());
-            result.put("activeServers", weights.stream().mapToInt(w -> w.isActive() ? 1 : 0).sum());
-
-            if (valid) {
-                result.put("message", "Configuration is valid");
-            } else {
-                result.put("message", "Configuration validation failed");
-            }
-
-            return ResponseEntity.ok(result);
-
-        } catch (Exception e) {
-            log.error("Error testing NGINX configuration: {}", e.getMessage());
-
-            result.put("status", "error");
-            result.put("message", "Error testing configuration: " + e.getMessage());
-            result.put("timestamp", LocalDateTime.now());
-
-            return ResponseEntity.badRequest().body(result);
-        }
+        return ResponseEntity.ok(response);
     }
 
     /**
-     * Get system health status
+     * Get metrics for a specific server
      */
-    @GetMapping("/health")
-    public ResponseEntity<Map<String, Object>> getSystemHealth() {
-        Map<String, Object> health = new HashMap<>();
-        health.put("timestamp", LocalDateTime.now());
-        health.put("service", "load-balancer");
+    @GetMapping("/metrics/{serverId}")
+    public ResponseEntity<Map<String, Object>> getServerMetrics(@PathVariable String serverId) {
+        Map<String, Object> response = new HashMap<>();
 
-        try {
-            // Check if we have recent metrics
-            List<ServerMetrics> metrics = metricsCollectionService.getLatestMetricsForAllServers();
-            health.put("metricsAvailable", !metrics.isEmpty());
-            health.put("serverCount", nginxConfig.getServerCount());
-            health.put("metricsCount", metrics.size());
+        var metrics = metricsCollectionService.getServerMetrics(serverId);
 
-            // Check NGINX status
-            health.put("nginxRunning", nginxConfigService.isNginxRunning());
-
-            // Check configuration validity
-            health.put("configValid", nginxConfig.hasValidWeightFactors());
-
-            // Overall health
-            boolean healthy = !metrics.isEmpty() && nginxConfig.hasValidWeightFactors();
-            health.put("status", healthy ? "healthy" : "degraded");
-
-        } catch (Exception e) {
-            health.put("status", "error");
-            health.put("error", e.getMessage());
+        if (metrics.isPresent()) {
+            response.put("metrics", metrics.get());
+            response.put("found", true);
+        } else {
+            response.put("found", false);
+            response.put("message", "No metrics found for server: " + serverId);
         }
 
-        return ResponseEntity.ok(health);
+        response.put("serverId", serverId);
+        response.put("instance", heartbeatService.getInstanceId());
+        response.put("timestamp", LocalDateTime.now());
+
+        return ResponseEntity.ok(response);
     }
 }
