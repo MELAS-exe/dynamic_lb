@@ -28,39 +28,39 @@ steps:
     id: 'docker-push-latest'
     args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO}/${_IMAGE_NAME}:latest']
 
-  # Step 5: Update Kubernetes deployment with new image (optional - for CD)
-  # Uncomment these steps if you want automatic deployment to GKE
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   id: 'get-gke-credentials'
-  #   args:
-  #   - 'container'
-  #   - 'clusters'
-  #   - 'get-credentials'
-  #   - '${_GKE_CLUSTER_NAME}'
-  #   - '--zone=${_GKE_ZONE}'
-  #   - '--project=$PROJECT_ID'
+  # Step 5: Get GKE credentials
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'get-gke-credentials'
+    args:
+      - 'container'
+      - 'clusters'
+      - 'get-credentials'
+      - '${_GKE_CLUSTER_NAME}'
+      - '--region=${_GKE_REGION}'  # Changed from --zone
+      - '--project=$PROJECT_ID'
 
-  # - name: 'gcr.io/cloud-builders/kubectl'
-  #   id: 'kubectl-set-image'
-  #   args:
-  #   - 'set'
-  #   - 'image'
-  #   - 'deployment/loadbalancer'
-  #   - 'loadbalancer=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO}/${_IMAGE_NAME}:$SHORT_SHA'
-  #   env:
-  #   - 'CLOUDSDK_COMPUTE_ZONE=${_GKE_ZONE}'
-  #   - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
+  # Step 6: Deploy Redis (if not already deployed)
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'deploy-redis'
+    args: [ 'apply', '-f', 'k8s/redis-deployment.yaml' ]
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
 
-  # - name: 'gcr.io/cloud-builders/kubectl'
-  #   id: 'kubectl-rollout-status'
-  #   args:
-  #   - 'rollout'
-  #   - 'status'
-  #   - 'deployment/loadbalancer'
-  #   - '--timeout=5m'
-  #   env:
-  #   - 'CLOUDSDK_COMPUTE_ZONE=${_GKE_ZONE}'
-  #   - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'deploy-redis-service'
+    args: [ 'apply', '-f', 'k8s/redis-service.yaml' ]
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
+
+  # Step 7: Deploy your application
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'deploy-app'
+    args: [ 'apply', '-f', 'k8s/loadbalancer-deployment.yaml' ]
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
 
 # Substitution variables - replace these with your values
 substitutions:
@@ -68,7 +68,7 @@ substitutions:
   _ARTIFACT_REGISTRY_REPO: 'loadbalancer-sandbox'
   _IMAGE_NAME: 'dynamic-loadbalancer'
   _GKE_CLUSTER_NAME: 'autopilot-cluster-1'
-  _GKE_ZONE: 'europe-west1-b'
+  _GKE_REGION: 'europe-west1'
 
 options:
   logging: CLOUD_LOGGING_ONLY
