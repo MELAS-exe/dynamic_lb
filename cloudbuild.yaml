@@ -1,5 +1,4 @@
 # Cloud Build configuration for GKE deployment with Artifact Registry
-# This builds the Docker image and pushes it to Artifact Registry
 
 steps:
   # Step 1: Build and package the application using Maven
@@ -39,26 +38,41 @@ steps:
       - '--region=${_GKE_REGION}'
       - '--project=$PROJECT_ID'
 
-  # Step 6: Process kustomization.yaml with variable substitution
+  # Step 6: Create processed kustomization with actual values
   - name: 'ubuntu'
     id: 'process-kustomization'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        sed -e "s|PROJECT_ID|$PROJECT_ID|g" \
-            -e "s|SHORT_SHA|$SHORT_SHA|g" \
-            -e "s|REGION|${_REGION}|g" \
-            -e "s|ARTIFACT_REGISTRY_REPO|${_ARTIFACT_REGISTRY_REPO}|g" \
-            -e "s|IMAGE_NAME|${_IMAGE_NAME}|g" \
-            k8s/kustomization.yaml > k8s/kustomization-processed.yaml
+        # Create a new kustomization.yaml with actual values
+        cat > k8s/kustomization.yaml << EOF
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+
+        resources:
+          - redis-deployment.yaml
+          - redis-service.yaml
+          - loadbalancer-deployment.yaml
+
+        images:
+          - name: dynamic-loadbalancer-placeholder
+            newName: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO}/${_IMAGE_NAME}
+            newTag: $SHORT_SHA
+        EOF
         
-        cp k8s/kustomization-processed.yaml k8s/kustomization.yaml
-        
-        echo "=== Processed Kustomization ==="
+        echo "=== Generated Kustomization ==="
         cat k8s/kustomization.yaml
 
-  # Step 7: Deploy with Kustomize
+  # Step 7: Preview what will be deployed (optional but helpful)
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'preview-manifests'
+    args: ['kustomize', 'k8s/']
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
+
+  # Step 8: Deploy with Kustomize
   - name: 'gcr.io/cloud-builders/kubectl'
     id: 'deploy-with-kustomize'
     args: ['apply', '-k', 'k8s/']
@@ -66,62 +80,14 @@ steps:
       - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
       - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
 
-  # Step 8: Wait a bit for pods to start
-  - name: 'ubuntu'
-    id: 'wait-for-pods'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        echo "Waiting 30 seconds for pods to start..."
-        sleep 30
-
-  # Step 9: DIAGNOSTIC - Check everything
+  # Step 9: Wait for rollout
   - name: 'gcr.io/cloud-builders/kubectl'
-    id: 'diagnose-deployment'
-    entrypoint: 'bash'
+    id: 'wait-for-rollout'
     args:
-      - '-c'
-      - |
-        echo "======================================"
-        echo "DEPLOYMENT STATUS"
-        echo "======================================"
-        kubectl get deployment dynamic-loadbalancer -o wide
-        
-        echo ""
-        echo "======================================"
-        echo "REPLICASET STATUS"
-        echo "======================================"
-        kubectl get rs -l app=dynamic-loadbalancer -o wide
-        
-        echo ""
-        echo "======================================"
-        echo "POD STATUS"
-        echo "======================================"
-        kubectl get pods -l app=dynamic-loadbalancer -o wide
-        
-        echo ""
-        echo "======================================"
-        echo "DESCRIBE PODS (EVENTS)"
-        echo "======================================"
-        kubectl describe pods -l app=dynamic-loadbalancer
-        
-        echo ""
-        echo "======================================"
-        echo "POD LOGS"
-        echo "======================================"
-        for pod in $(kubectl get pods -l app=dynamic-loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-          echo "=== Logs from $pod ==="
-          kubectl logs $pod --all-containers=true --tail=100 2>&1 || echo "No logs available for $pod"
-          echo ""
-        done
-        
-        echo ""
-        echo "======================================"
-        echo "REDIS STATUS (dependency check)"
-        echo "======================================"
-        kubectl get pods -l app=redis
-        kubectl get svc redis
+      - 'rollout'
+      - 'status'
+      - 'deployment/dynamic-loadbalancer'
+      - '--timeout=5m'
     env:
       - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
       - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'

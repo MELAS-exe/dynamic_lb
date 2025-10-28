@@ -12,12 +12,10 @@ spec:
       labels:
         app: dynamic-loadbalancer
     spec:
-      # Add service account if needed for image pull
-      # serviceAccountName: default
       containers:
         - name: dynamic-loadbalancer
           image: dynamic-loadbalancer-placeholder
-          imagePullPolicy: Always  # Force pull latest image
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
@@ -25,19 +23,17 @@ spec:
               value: "redis"
             - name: REDIS_PORT
               value: "6379"
-          # Add readiness probe
           readinessProbe:
             httpGet:
-              path: /actuator/health  # Adjust based on your app
+              path: /actuator/health
               port: 8080
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
-          # Add liveness probe
           livenessProbe:
             httpGet:
-              path: /actuator/health  # Adjust based on your app
+              path: /actuator/health
               port: 8080
             initialDelaySeconds: 60
             periodSeconds: 10
@@ -50,3 +46,15 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dynamic-loadbalancer
+spec:
+  type: LoadBalancer
+  selector:
+    app: dynamic-loadbalancer
+  ports:
+    - port: 80
+      targetPort: 8080
