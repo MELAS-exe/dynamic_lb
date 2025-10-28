@@ -55,6 +55,10 @@ steps:
         
         # Copy processed kustomization back
         cp k8s/kustomization-processed.yaml k8s/kustomization.yaml
+        
+        # Show what we're deploying
+        echo "=== Processed Kustomization ==="
+        cat k8s/kustomization.yaml
 
   # Step 7: Deploy with Kustomize
   - name: 'gcr.io/cloud-builders/kubectl'
@@ -64,7 +68,55 @@ steps:
       - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
       - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
 
-  # Step 8: Wait for rollout to complete
+  # Step 8: Check deployment and pod status (DIAGNOSTIC)
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'diagnose-deployment'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "======================================"
+        echo "DEPLOYMENT STATUS"
+        echo "======================================"
+        kubectl get deployment dynamic-loadbalancer -o wide
+        
+        echo ""
+        echo "======================================"
+        echo "REPLICASET STATUS"
+        echo "======================================"
+        kubectl get rs -l app=dynamic-loadbalancer
+        
+        echo ""
+        echo "======================================"
+        echo "POD STATUS"
+        echo "======================================"
+        kubectl get pods -l app=dynamic-loadbalancer -o wide
+        
+        echo ""
+        echo "======================================"
+        echo "POD EVENTS AND DETAILS"
+        echo "======================================"
+        kubectl describe pods -l app=dynamic-loadbalancer
+        
+        echo ""
+        echo "======================================"
+        echo "POD LOGS (if any pods are running)"
+        echo "======================================"
+        for pod in $(kubectl get pods -l app=dynamic-loadbalancer -o jsonpath='{.items[*].metadata.name}'); do
+          echo "--- Logs from $pod ---"
+          kubectl logs $pod --all-containers=true --tail=100 || echo "Could not fetch logs for $pod"
+        done
+        
+        echo ""
+        echo "======================================"
+        echo "DEPLOYMENT EVENTS"
+        echo "======================================"
+        kubectl describe deployment dynamic-loadbalancer | grep -A 30 "Events:" || echo "No deployment events"
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
+
+  # Step 9: Wait for rollout (allow failure so we can see diagnostics)
   - name: 'gcr.io/cloud-builders/kubectl'
     id: 'wait-for-rollout'
     args:
