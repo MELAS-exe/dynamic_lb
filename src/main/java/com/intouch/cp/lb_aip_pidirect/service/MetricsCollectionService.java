@@ -261,4 +261,49 @@ public class MetricsCollectionService {
 
         return metrics;
     }
+
+    /**
+     * Alias for processMetrics - called by MetricsController
+     */
+    public void receiveMetrics(String serverId, ServerMetrics metrics) {
+        processMetrics(serverId, metrics);
+    }
+
+    /**
+     * Get all metrics for a specific server (ordered by date desc)
+     */
+    public List<ServerMetrics> getMetricsForServer(String serverId) {
+        try {
+            return metricsRepository.findByServerIdOrderByCreatedAtDesc(serverId);
+        } catch (Exception e) {
+            log.error("Error getting metrics for server {}: {}", serverId, e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Get metrics for a server within a time range
+     */
+    public List<ServerMetrics> getMetricsForServerInTimeRange(
+            String serverId, LocalDateTime start, LocalDateTime end) {
+        try {
+            return metricsRepository.findByServerIdAndCreatedAtBetweenOrderByCreatedAtDesc(
+                    serverId, start, end);
+        } catch (Exception e) {
+            log.error("Error getting metrics for server {} in range: {}", serverId, e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Get total count of all metrics in database
+     */
+    public long getMetricsCount() {
+        try {
+            return metricsRepository.count();
+        } catch (Exception e) {
+            log.error("Error getting metrics count: {}", e.getMessage(), e);
+            return 0L;
+        }
+    }
 }

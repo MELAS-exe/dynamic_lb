@@ -35,11 +35,11 @@ public class InstanceHeartbeatService {
     @Scheduled(fixedDelayString = "#{${loadbalancer.redis.intervals.heartbeat:30000}}")
     public void sendHeartbeat() {
         try {
-            redisStateService.registerInstance();
-            
+            redisStateService.registerInstance(instanceId);
+
             List<String> activeInstances = redisStateService.getActiveInstances();
             log.debug("Instance {} heartbeat sent. Active instances: {}", instanceId, activeInstances.size());
-            
+
             if (log.isTraceEnabled()) {
                 log.trace("Active instances: {}", activeInstances);
             }
@@ -53,7 +53,7 @@ public class InstanceHeartbeatService {
      */
     private void registerInstance() {
         try {
-            redisStateService.registerInstance();
+            redisStateService.registerInstance(instanceId);
             log.info("Instance {} registered successfully", instanceId);
         } catch (Exception e) {
             log.error("Failed to register instance {}: {}", instanceId, e.getMessage(), e);

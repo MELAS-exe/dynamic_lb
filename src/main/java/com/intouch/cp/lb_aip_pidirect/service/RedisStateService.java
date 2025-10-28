@@ -1,6 +1,5 @@
 package com.intouch.cp.lb_aip_pidirect.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intouch.cp.lb_aip_pidirect.config.RedisConfig;
 import com.intouch.cp.lb_aip_pidirect.model.ServerMetrics;
@@ -71,6 +70,13 @@ public class RedisStateService {
     }
 
     /**
+     * ALIAS METHOD: Get server metrics (same as getMetrics)
+     */
+    public Optional<ServerMetrics> getServerMetrics(String serverId) {
+        return getMetrics(serverId);
+    }
+
+    /**
      * Get all server metrics from Redis
      */
     public Map<String, ServerMetrics> getAllMetrics() {
@@ -94,6 +100,13 @@ public class RedisStateService {
             log.error("Failed to retrieve all metrics from Redis: {}", e.getMessage(), e);
             return Collections.emptyMap();
         }
+    }
+
+    /**
+     * ALIAS METHOD: Get all server metrics (same as getAllMetrics)
+     */
+    public Map<String, ServerMetrics> getAllServerMetrics() {
+        return getAllMetrics();
     }
 
     /**
@@ -137,8 +150,8 @@ public class RedisStateService {
                     if (item instanceof WeightAllocation) {
                         weights.add((WeightAllocation) item);
                     } else if (item instanceof LinkedHashMap) {
-                        WeightAllocation allocation = objectMapper.convertValue(item, WeightAllocation.class);
-                        weights.add(allocation);
+                        WeightAllocation weight = objectMapper.convertValue(item, WeightAllocation.class);
+                        weights.add(weight);
                     }
                 }
 
@@ -153,6 +166,34 @@ public class RedisStateService {
     }
 
     /**
+     * Get weight allocations as a list (convenience method)
+     */
+    public List<WeightAllocation> getWeightAllocations() {
+        return getWeights().orElse(Collections.emptyList());
+    }
+
+    /**
+     * Get last weight calculation time
+     */
+    public Optional<LocalDateTime> getLastWeightCalculationTime() {
+        try {
+            String key = redisConfig.getKeys().getWeightsPrefix() + "last-update";
+            Object value = redisTemplate.opsForValue().get(key);
+
+            if (value instanceof LocalDateTime) {
+                return Optional.of((LocalDateTime) value);
+            } else if (value != null) {
+                return Optional.of(objectMapper.convertValue(value, LocalDateTime.class));
+            }
+
+            return Optional.empty();
+        } catch (Exception e) {
+            log.error("Failed to retrieve last weight calculation time: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Store Nginx configuration in Redis
      */
     public void storeNginxConfig(String config) {
@@ -161,19 +202,19 @@ public class RedisStateService {
             redisTemplate.opsForValue().set(key, config,
                     Duration.ofSeconds(redisConfig.getTtl().getNginxConfig()));
 
-            // Update last configuration update time
+            // Store last update timestamp
             String timestampKey = redisConfig.getKeys().getLastUpdateKey();
             redisTemplate.opsForValue().set(timestampKey, LocalDateTime.now(),
                     Duration.ofSeconds(redisConfig.getTtl().getNginxConfig()));
 
-            log.info("Stored Nginx configuration in Redis (instance: {})", instanceId);
+            log.info("Stored Nginx config in Redis (instance: {})", instanceId);
         } catch (Exception e) {
             log.error("Failed to store Nginx config in Redis: {}", e.getMessage(), e);
         }
     }
 
     /**
-     * Retrieve current Nginx configuration from Redis
+     * Retrieve Nginx configuration from Redis
      */
     public Optional<String> getNginxConfig() {
         try {
@@ -192,7 +233,7 @@ public class RedisStateService {
     }
 
     /**
-     * Get timestamp of last Nginx configuration update
+     * Get last Nginx update time
      */
     public Optional<LocalDateTime> getLastNginxUpdateTime() {
         try {
@@ -201,42 +242,75 @@ public class RedisStateService {
 
             if (value instanceof LocalDateTime) {
                 return Optional.of((LocalDateTime) value);
-            } else if (value instanceof LinkedHashMap) {
-                LocalDateTime timestamp = objectMapper.convertValue(value, LocalDateTime.class);
-                return Optional.of(timestamp);
+            } else if (value != null) {
+                return Optional.of(objectMapper.convertValue(value, LocalDateTime.class));
             }
 
             return Optional.empty();
         } catch (Exception e) {
-            log.error("Failed to retrieve last update time from Redis: {}", e.getMessage(), e);
+            log.error("Failed to retrieve last Nginx update time: {}", e.getMessage());
             return Optional.empty();
         }
     }
 
     /**
-     * Register this instance with a heartbeat
+     * Acquire a distributed lock
      */
-    public void registerInstance() {
+    public boolean acquireLock(String lockName, int ttlSeconds) {
         try {
-            String key = redisConfig.getKeys().getInstancePrefix() + instanceId;
-            Map<String, Object> instanceInfo = new HashMap<>();
-            instanceInfo.put("instanceId", instanceId);
-            instanceInfo.put("lastHeartbeat", LocalDateTime.now());
-            instanceInfo.put("status", "active");
+            String key = redisConfig.getKeys().getLockPrefix() + lockName;
+            Boolean success = redisTemplate.opsForValue()
+                    .setIfAbsent(key, instanceId, Duration.ofSeconds(ttlSeconds));
 
-            redisTemplate.opsForValue().set(key, instanceInfo,
-                    Duration.ofSeconds(redisConfig.getTtl().getInstanceHeartbeat()));
+            if (Boolean.TRUE.equals(success)) {
+                log.debug("Lock '{}' acquired by instance: {}", lockName, instanceId);
+                return true;
+            }
 
-            log.debug("Registered instance {} with heartbeat", instanceId);
+            log.debug("Lock '{}' already held by another instance", lockName);
+            return false;
         } catch (Exception e) {
-            log.error("Failed to register instance {}: {}", instanceId, e.getMessage(), e);
+            log.error("Failed to acquire lock '{}': {}", lockName, e.getMessage(), e);
+            return false;
         }
     }
 
     /**
-     * Get all active instances
+     * Release a distributed lock
      */
-    @SuppressWarnings("unchecked")
+    public void releaseLock(String lockName) {
+        try {
+            String key = redisConfig.getKeys().getLockPrefix() + lockName;
+
+            // Only release if this instance owns the lock
+            Object lockOwner = redisTemplate.opsForValue().get(key);
+            if (instanceId.equals(lockOwner)) {
+                redisTemplate.delete(key);
+                log.debug("Lock '{}' released by instance: {}", lockName, instanceId);
+            }
+        } catch (Exception e) {
+            log.error("Failed to release lock '{}': {}", lockName, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Store instance heartbeat
+     */
+    public void storeHeartbeat(String instanceId) {
+        try {
+            String key = redisConfig.getKeys().getInstancePrefix() + instanceId;
+            redisTemplate.opsForValue().set(key, LocalDateTime.now(),
+                    Duration.ofSeconds(redisConfig.getTtl().getInstanceHeartbeat()));
+
+            log.debug("Heartbeat stored for instance: {}", instanceId);
+        } catch (Exception e) {
+            log.error("Failed to store heartbeat for instance {}: {}", instanceId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get active instances
+     */
     public List<String> getActiveInstances() {
         try {
             String pattern = redisConfig.getKeys().getInstancePrefix() + "*";
@@ -248,13 +322,11 @@ public class RedisStateService {
 
             List<String> activeInstances = new ArrayList<>();
             for (String key : keys) {
-                Object value = redisTemplate.opsForValue().get(key);
-                if (value instanceof Map) {
-                    Map<String, Object> instanceInfo = (Map<String, Object>) value;
-                    activeInstances.add((String) instanceInfo.get("instanceId"));
-                }
+                String instance = key.substring(redisConfig.getKeys().getInstancePrefix().length());
+                activeInstances.add(instance);
             }
 
+            log.debug("Found {} active instances", activeInstances.size());
             return activeInstances;
         } catch (Exception e) {
             log.error("Failed to get active instances: {}", e.getMessage(), e);
@@ -263,50 +335,7 @@ public class RedisStateService {
     }
 
     /**
-     * Acquire a distributed lock for critical operations
-     */
-    public boolean acquireLock(String lockName, long timeoutSeconds) {
-        try {
-            String key = redisConfig.getKeys().getLockPrefix() + lockName;
-            Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
-                    key,
-                    instanceId,
-                    Duration.ofSeconds(timeoutSeconds)
-            );
-
-            if (Boolean.TRUE.equals(acquired)) {
-                log.debug("Instance {} acquired lock: {}", instanceId, lockName);
-                return true;
-            }
-
-            log.debug("Instance {} failed to acquire lock: {}", instanceId, lockName);
-            return false;
-        } catch (Exception e) {
-            log.error("Failed to acquire lock {}: {}", lockName, e.getMessage(), e);
-            return false;
-        }
-    }
-
-    /**
-     * Release a distributed lock
-     */
-    public void releaseLock(String lockName) {
-        try {
-            String key = redisConfig.getKeys().getLockPrefix() + lockName;
-            String lockOwner = (String) redisTemplate.opsForValue().get(key);
-
-            // Only release if this instance owns the lock
-            if (instanceId.equals(lockOwner)) {
-                redisTemplate.delete(key);
-                log.debug("Instance {} released lock: {}", instanceId, lockName);
-            }
-        } catch (Exception e) {
-            log.error("Failed to release lock {}: {}", lockName, e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Clean up old metrics
+     * Cleanup old metrics
      */
     public void cleanupOldMetrics() {
         try {
@@ -348,6 +377,61 @@ public class RedisStateService {
     }
 
     /**
+     * ALIAS METHOD: Check if Redis is healthy (same as isHealthy)
+     */
+    public boolean isRedisHealthy() {
+        return isHealthy();
+    }
+
+    /**
+     * Get comprehensive Redis statistics
+     */
+    public Map<String, Object> getRedisStats() {
+        Map<String, Object> stats = new HashMap<>();
+
+        try {
+            // Basic health
+            stats.put("healthy", isHealthy());
+
+            // Count keys by type
+            String metricsPattern = redisConfig.getKeys().getMetricsPrefix() + "*";
+            Set<String> metricsKeys = redisTemplate.keys(metricsPattern);
+            stats.put("metricsCount", metricsKeys != null ? metricsKeys.size() : 0);
+
+            String weightsPattern = redisConfig.getKeys().getWeightsPrefix() + "*";
+            Set<String> weightsKeys = redisTemplate.keys(weightsPattern);
+            stats.put("weightsKeysCount", weightsKeys != null ? weightsKeys.size() : 0);
+
+            String instancePattern = redisConfig.getKeys().getInstancePrefix() + "*";
+            Set<String> instanceKeys = redisTemplate.keys(instancePattern);
+            stats.put("activeInstancesCount", instanceKeys != null ? instanceKeys.size() : 0);
+
+            String lockPattern = redisConfig.getKeys().getLockPrefix() + "*";
+            Set<String> lockKeys = redisTemplate.keys(lockPattern);
+            stats.put("activeLocksCount", lockKeys != null ? lockKeys.size() : 0);
+
+            // Data availability
+            stats.put("weightsAvailable", getWeights().isPresent());
+            stats.put("nginxConfigAvailable", getNginxConfig().isPresent());
+
+            // Timestamps
+            getLastWeightCalculationTime().ifPresent(time ->
+                    stats.put("lastWeightCalculation", time));
+            getLastNginxUpdateTime().ifPresent(time ->
+                    stats.put("lastNginxUpdate", time));
+
+            // Active instances
+            stats.put("activeInstances", getActiveInstances());
+
+        } catch (Exception e) {
+            log.error("Error gathering Redis stats: {}", e.getMessage(), e);
+            stats.put("error", e.getMessage());
+        }
+
+        return stats;
+    }
+
+    /**
      * Store arbitrary configuration data
      */
     public void storeConfig(String configKey, Object configData) {
@@ -373,6 +457,85 @@ public class RedisStateService {
         } catch (Exception e) {
             log.error("Failed to retrieve config {}: {}", configKey, e.getMessage(), e);
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Clear all load balancer data from Redis (for testing/reset)
+     */
+    public void clearAllData() {
+        try {
+            log.warn("Clearing all load balancer data from Redis");
+
+            // Clear metrics
+            String metricsPattern = redisConfig.getKeys().getMetricsPrefix() + "*";
+            Set<String> metricsKeys = redisTemplate.keys(metricsPattern);
+            if (metricsKeys != null && !metricsKeys.isEmpty()) {
+                redisTemplate.delete(metricsKeys);
+                log.info("Cleared {} metrics keys", metricsKeys.size());
+            }
+
+            // Clear weights
+            String weightsPattern = redisConfig.getKeys().getWeightsPrefix() + "*";
+            Set<String> weightsKeys = redisTemplate.keys(weightsPattern);
+            if (weightsKeys != null && !weightsKeys.isEmpty()) {
+                redisTemplate.delete(weightsKeys);
+                log.info("Cleared {} weights keys", weightsKeys.size());
+            }
+
+            // Clear config
+            String configPattern = redisConfig.getKeys().getConfigPrefix() + "*";
+            Set<String> configKeys = redisTemplate.keys(configPattern);
+            if (configKeys != null && !configKeys.isEmpty()) {
+                redisTemplate.delete(configKeys);
+                log.info("Cleared {} config keys", configKeys.size());
+            }
+
+            // Clear nginx config
+            redisTemplate.delete(redisConfig.getKeys().getNginxConfigKey());
+            redisTemplate.delete(redisConfig.getKeys().getLastUpdateKey());
+
+            // Clear locks
+            String lockPattern = redisConfig.getKeys().getLockPrefix() + "*";
+            Set<String> lockKeys = redisTemplate.keys(lockPattern);
+            if (lockKeys != null && !lockKeys.isEmpty()) {
+                redisTemplate.delete(lockKeys);
+                log.info("Cleared {} lock keys", lockKeys.size());
+            }
+
+            // Clear instance heartbeats
+            String instancePattern = redisConfig.getKeys().getInstancePrefix() + "*";
+            Set<String> instanceKeys = redisTemplate.keys(instancePattern);
+            if (instanceKeys != null && !instanceKeys.isEmpty()) {
+                redisTemplate.delete(instanceKeys);
+                log.info("Cleared {} instance keys", instanceKeys.size());
+            }
+
+            log.info("Successfully cleared all load balancer data from Redis");
+        } catch (Exception e) {
+            log.error("Failed to clear Redis data: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to clear Redis data", e);
+        }
+    }
+
+    /**
+     * Register a new load balancer instance in Redis.
+     * This helps keep track of all running instances in the cluster.
+     */
+    public void registerInstance(String instanceId) {
+        try {
+            String key = redisConfig.getKeys().getInstancePrefix() + instanceId;
+            LocalDateTime now = LocalDateTime.now();
+
+            redisTemplate.opsForValue().set(
+                    key,
+                    now,
+                    Duration.ofSeconds(redisConfig.getTtl().getInstanceHeartbeat())
+            );
+
+            log.info("Registered new load balancer instance '{}' at {}", instanceId, now);
+        } catch (Exception e) {
+            log.error("Failed to register instance {}: {}", instanceId, e.getMessage(), e);
         }
     }
 }

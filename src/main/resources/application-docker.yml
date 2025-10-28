@@ -33,19 +33,14 @@ spring:
 loadbalancer:
   servers:
     - id: server1
-      host: backend1
-      port: 8080
+      host: pi-gateway-kcop3cwgaq-ew.a.run.app/ci/api/v1
+      port:
       name: "Backend Server 1"
       enabled: true
     - id: server2
-      host: backend2
-      port: 8080
+      host: qlf-agentapi-eme.gutouch.net/pda/pi
+      port:
       name: "Backend Server 2"
-      enabled: true
-    - id: server3
-      host: backend3
-      port: 8080
-      name: "Backend Server 3"
       enabled: true
 
   nginx:
