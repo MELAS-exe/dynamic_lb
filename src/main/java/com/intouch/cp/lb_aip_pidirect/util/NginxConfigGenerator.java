@@ -77,11 +77,11 @@ public class NginxConfigGenerator {
             config.append("    location / {\n");
             config.append("        # Forward to actual backend\n");
             config.append("        proxy_pass https://").append(hostname).append(path).append("$request_uri;\n");
-            config.append("\n");
-            config.append("        # SSL settings\n");
-            config.append("        proxy_ssl_server_name on;\n");
-            config.append("        proxy_ssl_name ").append(hostname).append(";\n");
-            config.append("        proxy_ssl_protocols TLSv1.2 TLSv1.3;\n");
+//            config.append("\n");
+//            config.append("        # SSL settings\n");
+//            config.append("        proxy_ssl_server_name on;\n");
+//            config.append("        proxy_ssl_name ").append(hostname).append(";\n");
+//            config.append("        proxy_ssl_protocols TLSv1.2 TLSv1.3;\n");
             config.append("\n");
             config.append("        # Headers\n");
             config.append("        proxy_set_header Host ").append(hostname).append(";\n");

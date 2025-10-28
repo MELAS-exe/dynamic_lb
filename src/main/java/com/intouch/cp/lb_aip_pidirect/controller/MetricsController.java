@@ -134,7 +134,7 @@ public class MetricsController {
         if (metrics.size() >= 3) {
             analysis.put("ewmaSmoothness", metricsCalculator.calculateEwmaSmoothness(metrics));
         }
-
+        
         // Health scores
         if (!metrics.isEmpty()) {
             ServerMetrics latest = metrics.get(0);

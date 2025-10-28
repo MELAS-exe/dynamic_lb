@@ -1,20 +1,42 @@
 version: '3.8'
 
 services:
-  # SpringBoot Load Balancer Service
-  loadbalancer:
-    build: .
-    container_name: loadbalancer-app
+  # Redis for shared state management
+  redis:
+    image: redis:7-alpine
+    container_name: redis-state
     ports:
-      - "8090:8090"
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - loadbalancer-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Load Balancer Instance 1
+  loadbalancer1:
+    build: .
+    container_name: loadbalancer-app-1
+    ports:
+      - "8091:8090"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - INSTANCE_ID=lb-instance-1
     volumes:
       - nginx-config:/nginx-config
-    user: "1000:1000"
     networks:
       - loadbalancer-network
     depends_on:
+      redis:
+        condition: service_healthy
       nginx:
         condition: service_started
       backend1:
@@ -29,6 +51,41 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    restart: unless-stopped
+
+  # Load Balancer Instance 2
+  loadbalancer2:
+    build: .
+    container_name: loadbalancer-app-2
+    ports:
+      - "8092:8090"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - INSTANCE_ID=lb-instance-2
+    volumes:
+      - nginx-config:/nginx-config
+    networks:
+      - loadbalancer-network
+    depends_on:
+      redis:
+        condition: service_healthy
+      nginx:
+        condition: service_started
+      backend1:
+        condition: service_started
+      backend2:
+        condition: service_started
+      backend3:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/loadbalancer/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
 
   # NGINX Load Balancer
   nginx:
@@ -54,48 +111,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Backend Server 1
-  backend1:
-    image: nginx:alpine
-    container_name: backend-server-1
-    volumes:
-      - ./backend/server1:/usr/share/nginx/html:ro
-    networks:
-      - loadbalancer-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-
-  # Backend Server 2
-  backend2:
-    image: nginx:alpine
-    container_name: backend-server-2
-    volumes:
-      - ./backend/server2:/usr/share/nginx/html:ro
-    networks:
-      - loadbalancer-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-
-  # Backend Server 3
-  backend3:
-    image: nginx:alpine
-    container_name: backend-server-3
-    volumes:
-      - ./backend/server3:/usr/share/nginx/html:ro
-    networks:
-      - loadbalancer-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-
 networks:
   loadbalancer-network:
     driver: bridge
@@ -103,3 +118,4 @@ networks:
 volumes:
   nginx-config:
   nginx-logs:
+  redis-data:
