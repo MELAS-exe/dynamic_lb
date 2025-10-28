@@ -1,0 +1,13 @@
+# k8s/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - redis-deployment.yaml
+  - redis-service.yaml
+  - loadbalancer-deployment.yaml
+
+images:
+  - name: dynamic-loadbalancer-image
+    newName: europe-west1-docker.pkg.dev/PROJECT_ID/loadbalancer-sandbox/dynamic-loadbalancer
+    newTag: latest

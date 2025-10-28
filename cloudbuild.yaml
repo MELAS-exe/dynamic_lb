@@ -36,33 +36,47 @@ steps:
       - 'clusters'
       - 'get-credentials'
       - '${_GKE_CLUSTER_NAME}'
-      - '--region=${_GKE_REGION}'  # Changed from --zone
+      - '--region=${_GKE_REGION}'
       - '--project=$PROJECT_ID'
 
-  # Step 6: Deploy Redis (if not already deployed)
+  # Step 6: Process kustomization.yaml with variable substitution
+  - name: 'ubuntu'
+    id: 'process-kustomization'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        sed -e "s|PROJECT_ID|$PROJECT_ID|g" \
+            -e "s|SHORT_SHA|$SHORT_SHA|g" \
+            -e "s|REGION|${_REGION}|g" \
+            -e "s|ARTIFACT_REGISTRY_REPO|${_ARTIFACT_REGISTRY_REPO}|g" \
+            -e "s|IMAGE_NAME|${_IMAGE_NAME}|g" \
+            k8s/kustomization.yaml > k8s/kustomization-processed.yaml
+        
+        # Copy processed kustomization back
+        cp k8s/kustomization-processed.yaml k8s/kustomization.yaml
+
+  # Step 7: Deploy with Kustomize
   - name: 'gcr.io/cloud-builders/kubectl'
-    id: 'deploy-redis'
-    args: [ 'apply', '-f', 'k8s/redis-deployment.yaml' ]
+    id: 'deploy-with-kustomize'
+    args: ['apply', '-k', 'k8s/']
     env:
       - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
       - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
 
+  # Step 8: Wait for rollout to complete
   - name: 'gcr.io/cloud-builders/kubectl'
-    id: 'deploy-redis-service'
-    args: [ 'apply', '-f', 'k8s/redis-service.yaml' ]
+    id: 'wait-for-rollout'
+    args:
+      - 'rollout'
+      - 'status'
+      - 'deployment/dynamic-loadbalancer'
+      - '--timeout=5m'
     env:
       - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
       - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
 
-  # Step 7: Deploy your application
-  - name: 'gcr.io/cloud-builders/kubectl'
-    id: 'deploy-app'
-    args: [ 'apply', '-f', 'k8s/loadbalancer-deployment.yaml' ]
-    env:
-      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}'
-      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'
-
-# Substitution variables - replace these with your values
+# Substitution variables
 substitutions:
   _REGION: 'europe-west1'
   _ARTIFACT_REGISTRY_REPO: 'loadbalancer-sandbox'
