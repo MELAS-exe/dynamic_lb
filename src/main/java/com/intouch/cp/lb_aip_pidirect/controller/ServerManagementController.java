@@ -182,6 +182,10 @@ public class ServerManagementController {
             if (updatedServer.getName() != null) {
                 existingServer.setName(updatedServer.getName());
             }
+
+            if(updatedServer.hasPort()){
+                existingServer.setPort(updatedServer.getPort());
+            }
             existingServer.setEnabled(updatedServer.isEnabled());
 
             // Trigger weight recalculation with updated server

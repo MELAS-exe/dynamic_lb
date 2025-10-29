@@ -25,7 +25,7 @@ spring:
   cache:
     type: redis
     redis:
-      time-to-live: 300000  # 5 minutes default TTL
+      time-to-live: 0  # 5 minutes default TTL
       cache-null-values: false
       key-prefix: "loadbalancer:"
 
