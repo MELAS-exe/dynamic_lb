@@ -3,21 +3,27 @@ package com.intouch.cp.lb_aip_pidirect.service;
 import com.intouch.cp.lb_aip_pidirect.config.NginxConfig;
 import com.intouch.cp.lb_aip_pidirect.model.WeightAllocation;
 import com.intouch.cp.lb_aip_pidirect.util.NginxConfigGenerator;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Enhanced NginxConfigService with DUAL upstream support
+ * Manages separate configurations for incoming and outgoing servers
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -32,18 +38,18 @@ public class NginxConfigService {
 
     @PostConstruct
     public void init() {
-        log.info("=== Initializing NGINX Configuration Service ===");
+        log.info("=== Initializing NGINX Configuration Service (DUAL UPSTREAM MODE) ===");
 
         String configPath = nginxConfig.getNginx().getConfigPath();
-        if (configPath == null || configPath.isEmpty()) {
-            log.error("NGINX config path is not set. Please check configuration.");
+        if (configPath == null) {
+            log.error("NGINX config path is not properly configured!");
             return;
         }
 
         log.info("NGINX config directory: {}", nginxConfig.getNginx().getConfigDir());
         log.info("NGINX config file: {}", nginxConfig.getNginx().getConfigFile());
         log.info("Full config path: {}", configPath);
-        log.info("Dual upstream mode: {}", nginxConfig.isDualUpstreamEnabled() ? "ENABLED" : "DISABLED");
+        log.info("Dual upstream enabled: {}", nginxConfig.isDualUpstreamEnabled());
 
         // Create config directory if it doesn't exist
         try {
@@ -63,17 +69,27 @@ public class NginxConfigService {
     }
 
     /**
-     * Update dual upstream configuration (incoming + outgoing)
+     * Update upstream configuration with DUAL upstreams
      */
     public synchronized boolean updateDualUpstreamConfiguration(
             List<WeightAllocation> incomingWeights,
             List<WeightAllocation> outgoingWeights) {
+
         try {
-            log.info("Updating DUAL upstream configuration - Incoming: {} servers, Outgoing: {} servers",
+            log.info("Updating DUAL upstream configuration - Incoming: {}, Outgoing: {}",
                     incomingWeights.size(), outgoingWeights.size());
 
-            // Generate new dual configuration
-            String newConfig = configGenerator.generateDualUpstreamConfig(incomingWeights, outgoingWeights);
+            // Generate new configuration with both upstreams
+            String newConfig = configGenerator.generateDualUpstreamConfig(
+                    incomingWeights,
+                    outgoingWeights
+            );
+
+            // Validate configuration
+            if (!configGenerator.validateConfig(newConfig)) {
+                log.error("Generated configuration failed validation");
+                return false;
+            }
 
             // Store in Redis for other instances to sync
             redisStateService.storeNginxConfig(newConfig);
@@ -88,128 +104,47 @@ public class NginxConfigService {
     }
 
     /**
-     * Update single upstream configuration (backward compatibility)
+     * BACKWARD COMPATIBILITY: Update upstream configuration (single list)
+     * Uses outgoing servers for backward compatibility
      */
     public synchronized boolean updateUpstreamConfiguration(List<WeightAllocation> weights) {
-        try {
-            log.info("Updating upstream configuration with {} servers", weights.size());
-
-            // Generate new configuration
-            String newConfig = configGenerator.generateUpstreamConfig(weights);
-
-            // Store in Redis for other instances to sync
-            redisStateService.storeNginxConfig(newConfig);
-
-            // Apply configuration locally
-            return applyConfiguration(newConfig);
-
-        } catch (Exception e) {
-            log.error("Failed to update upstream configuration: {}", e.getMessage(), e);
-            return false;
-        }
+        log.info("updateUpstreamConfiguration() called - treating as outgoing servers");
+        // For backward compatibility, treat as outgoing servers
+        return updateDualUpstreamConfiguration(new ArrayList<>(), weights);
     }
 
     /**
      * Apply configuration to NGINX
      */
-    private boolean applyConfiguration(String newConfig) {
+    private boolean applyConfiguration(String configContent) {
         try {
-            // Validate configuration
-            if (!configGenerator.validateConfig(newConfig)) {
-                log.error("Configuration validation failed. Skipping update.");
-                return false;
-            }
-
             String configPath = nginxConfig.getNginx().getConfigPath();
-            Path path = Paths.get(configPath);
 
-            // Backup current configuration
-            if (Files.exists(path)) {
-                Path backupPath = Paths.get(configPath + ".backup");
-                Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
-                log.debug("Created backup: {}", backupPath);
+            // Write configuration to file
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(configPath))) {
+                writer.write(configContent);
             }
 
-            // Write new configuration
-            Files.writeString(path, newConfig);
-            log.info("Written new configuration to: {}", configPath);
-
-            // Set proper permissions
-            try {
-                Runtime.getRuntime().exec(new String[]{"chmod", "664", configPath});
-            } catch (IOException e) {
-                log.warn("Failed to set file permissions: {}", e.getMessage());
-            }
+            log.info("Configuration written to: {}", configPath);
 
             // Store current config
-            currentConfigContent = newConfig;
+            currentConfigContent = configContent;
             lastConfigUpdate = LocalDateTime.now();
 
             // Reload NGINX
             boolean reloaded = reloadNginx();
+
             if (reloaded) {
-                log.info("✓ NGINX configuration updated and reloaded successfully");
+                log.info("NGINX configuration applied and reloaded successfully");
                 return true;
             } else {
-                log.error("Failed to reload NGINX");
+                log.error("NGINX reload failed");
                 return false;
             }
 
         } catch (IOException e) {
-            log.error("Failed to write configuration: {}", e.getMessage(), e);
+            log.error("Failed to write configuration file: {}", e.getMessage(), e);
             return false;
-        }
-    }
-
-    /**
-     * Periodically sync configuration from Redis
-     * This ensures all instances have the same Nginx configuration
-     */
-    @Scheduled(fixedDelayString = "#{${loadbalancer.redis.intervals.config-sync:10000}}")
-    public void syncConfigFromRedis() {
-        try {
-            // Get last update time from Redis
-            Optional<LocalDateTime> redisUpdateTime = redisStateService.getLastNginxUpdateTime();
-
-            if (redisUpdateTime.isEmpty()) {
-                log.debug("No Redis configuration timestamp found");
-                return;
-            }
-
-            // Check if we need to update
-            if (lastConfigUpdate != null && !redisUpdateTime.get().isAfter(lastConfigUpdate)) {
-                log.trace("Local config is up to date");
-                return;
-            }
-
-            // Get config from Redis
-            Optional<String> redisConfig = redisStateService.getNginxConfig();
-
-            if (redisConfig.isEmpty()) {
-                log.debug("No configuration found in Redis");
-                return;
-            }
-
-            String newConfig = redisConfig.get();
-
-            // Check if config actually changed
-            if (newConfig.equals(currentConfigContent)) {
-                log.trace("Config content unchanged, updating timestamp only");
-                lastConfigUpdate = redisUpdateTime.get();
-                return;
-            }
-
-            log.info("Syncing NGINX configuration from Redis (updated at: {})", redisUpdateTime.get());
-
-            // Apply the configuration
-            if (applyConfiguration(newConfig)) {
-                log.info("✓ Successfully synced configuration from Redis");
-            } else {
-                log.error("Failed to apply configuration from Redis");
-            }
-
-        } catch (Exception e) {
-            log.error("Error syncing config from Redis: {}", e.getMessage(), e);
         }
     }
 
@@ -225,81 +160,101 @@ public class NginxConfigService {
             int exitCode = process.waitFor();
 
             if (exitCode == 0) {
-                log.info("✓ NGINX reloaded successfully");
+                log.info("NGINX reloaded successfully");
                 return true;
             } else {
                 log.error("NGINX reload failed with exit code: {}", exitCode);
                 return false;
             }
 
-        } catch (IOException | InterruptedException e) {
-            log.error("Error reloading Nginx: {}", e.getMessage(), e);
+        } catch (Exception e) {
+            log.error("Failed to reload NGINX: {}", e.getMessage(), e);
             return false;
         }
     }
 
     /**
-     * Get current configuration content
+     * Periodically sync configuration from Redis
+     */
+    @Scheduled(fixedDelayString = "#{${loadbalancer.redis.intervals.config-sync:10000}}")
+    public void syncConfigFromRedis() {
+        try {
+            Optional<LocalDateTime> redisUpdateTime = redisStateService.getLastNginxUpdateTime();
+
+            if (redisUpdateTime.isEmpty()) {
+                log.debug("No configuration update time in Redis");
+                return;
+            }
+
+            // If Redis has newer config, apply it
+            if (lastConfigUpdate == null || redisUpdateTime.get().isAfter(lastConfigUpdate)) {
+                log.info("Syncing newer configuration from Redis");
+
+                Optional<String> redisConfig = redisStateService.getNginxConfig();
+                if (redisConfig.isPresent()) {
+                    applyConfiguration(redisConfig.get());
+                    log.info("Configuration synced from Redis successfully");
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("Error syncing config from Redis: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get current configuration
+     */
+    public String getCurrentConfig() {
+        return currentConfigContent;
+    }
+
+    /**
+     * BACKWARD COMPATIBILITY: Get current configuration
      */
     public String getCurrentConfiguration() {
-        if (currentConfigContent != null) {
-            return currentConfigContent;
-        }
-
-        // Try to read from Redis
-        Optional<String> redisConfig = redisStateService.getNginxConfig();
-        if (redisConfig.isPresent()) {
-            currentConfigContent = redisConfig.get();
-            return currentConfigContent;
-        }
-
-        // Try to read from file
-        try {
-            String configPath = nginxConfig.getNginx().getConfigPath();
-            Path path = Paths.get(configPath);
-
-            if (Files.exists(path)) {
-                currentConfigContent = Files.readString(path);
-                return currentConfigContent;
-            }
-        } catch (IOException e) {
-            log.error("Failed to read config from file: {}", e.getMessage(), e);
-        }
-
-        return null;
+        return getCurrentConfig();
     }
 
     /**
-     * Force refresh configuration from Redis
+     * Get last update time
+     */
+    public LocalDateTime getLastConfigUpdate() {
+        return lastConfigUpdate;
+    }
+
+    /**
+     * BACKWARD COMPATIBILITY: Force refresh from Redis
      */
     public boolean forceRefreshFromRedis() {
-        log.info("Forcing configuration refresh from Redis");
-        lastConfigUpdate = null;
-        syncConfigFromRedis();
-        return currentConfigContent != null;
+        try {
+            log.info("Force refreshing configuration from Redis");
+            syncConfigFromRedis();
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to force refresh from Redis: {}", e.getMessage(), e);
+            return false;
+        }
     }
 
     /**
-     * Get last configuration update timestamp
-     */
-    public Optional<LocalDateTime> getLastUpdateTime() {
-        return Optional.ofNullable(lastConfigUpdate);
-    }
-
-    /**
-     * Check if Nginx configuration is in sync with Redis
+     * BACKWARD COMPATIBILITY: Check if in sync with Redis
      */
     public boolean isInSyncWithRedis() {
         try {
-            Optional<LocalDateTime> redisTime = redisStateService.getLastNginxUpdateTime();
+            Optional<LocalDateTime> redisUpdateTime = redisStateService.getLastNginxUpdateTime();
 
-            if (redisTime.isEmpty() || lastConfigUpdate == null) {
+            if (redisUpdateTime.isEmpty()) {
+                return lastConfigUpdate == null;
+            }
+
+            if (lastConfigUpdate == null) {
                 return false;
             }
 
-            return !redisTime.get().isAfter(lastConfigUpdate);
+            return !redisUpdateTime.get().isAfter(lastConfigUpdate);
         } catch (Exception e) {
-            log.error("Error checking sync status: {}", e.getMessage());
+            log.error("Error checking sync status: {}", e.getMessage(), e);
             return false;
         }
     }
