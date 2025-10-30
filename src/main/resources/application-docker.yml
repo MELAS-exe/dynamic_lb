@@ -25,22 +25,36 @@ spring:
   cache:
     type: redis
     redis:
-      time-to-live: 0  # 5 minutes default TTL
+      time-to-live: 0
       cache-null-values: false
       key-prefix: "loadbalancer:"
 
 # Load Balancer Configuration for Docker
 loadbalancer:
+  # INCOMING servers configuration (original servers)
   servers:
     - id: server1
       host: pi-gateway-kcop3cwgaq-ew.a.run.app/ci/api/v1
       port:
-      name: "Backend Server 1"
+      name: "Incoming Backend Server 1"
       enabled: true
     - id: server2
       host: qlf-agentapi-eme.gutouch.net/pda/pi
       port:
-      name: "Backend Server 2"
+      name: "Incoming Backend Server 2"
+      enabled: true
+
+  # OUTGOING servers configuration (new separate servers)
+  outgoing-servers:
+    - id: outgoing1
+      host: backend-a-971441253898.europe-west1.run.app
+      port:
+      name: "Outgoing Backend Server 1"
+      enabled: true
+    - id: outgoing2
+      host: backend-b-971441253898.europe-west1.run.app
+      port:
+      name: "Outgoing Backend Server 2"
       enabled: true
 
   nginx:
@@ -48,6 +62,9 @@ loadbalancer:
     config-file: "upstream.conf"
     reload-command: "nginx -s reload"
     upstream-name: "backend"
+    # Support for dual upstreams
+    incoming-upstream-name: "backend_incoming"
+    outgoing-upstream-name: "backend_outgoing"
 
   weight-factors:
     response-time: 0.25
@@ -66,6 +83,9 @@ loadbalancer:
       last-update-key: "nginx:last-update"
       instance-prefix: "instance:"
       lock-prefix: "lock:"
+      # New keys for dual upstream support
+      incoming-weights-prefix: "weights:incoming:"
+      outgoing-weights-prefix: "weights:outgoing:"
 
     ttl:
       metrics: 600          # 10 minutes

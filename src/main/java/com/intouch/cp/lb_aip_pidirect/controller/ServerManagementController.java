@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/servers")
@@ -41,9 +42,9 @@ public class ServerManagementController {
     public ResponseEntity<ServerInfo> getServer(@PathVariable String serverId) {
         log.debug("Fetching server: {}", serverId);
 
-        ServerInfo server = nginxConfig.getServerById(serverId);
-        if (server != null) {
-            return ResponseEntity.ok(server);
+        Optional<ServerInfo> server = nginxConfig.getServerById(serverId);
+        if (server.isPresent()) {
+            return ResponseEntity.ok(server.get());
         } else {
             return ResponseEntity.notFound().build();
         }
@@ -60,7 +61,7 @@ public class ServerManagementController {
 
         try {
             // Validate server doesn't already exist
-            if (nginxConfig.getServerById(newServer.getId()) != null) {
+            if (nginxConfig.getServerById(newServer.getId()).isPresent()) {
                 response.put("status", "error");
                 response.put("message", "Server with ID '" + newServer.getId() + "' already exists");
                 return ResponseEntity.badRequest().body(response);
@@ -111,13 +112,15 @@ public class ServerManagementController {
 
         try {
             // Find the server
-            ServerInfo serverToRemove = nginxConfig.getServerById(serverId);
+            Optional<ServerInfo> serverToRemoveOpt = nginxConfig.getServerById(serverId);
 
-            if (serverToRemove == null) {
+            if (!serverToRemoveOpt.isPresent()) {
                 response.put("status", "error");
                 response.put("message", "Server with ID '" + serverId + "' not found");
                 return ResponseEntity.notFound().build();
             }
+
+            ServerInfo serverToRemove = serverToRemoveOpt.get();
 
             // Don't allow removing the last server
             if (nginxConfig.getServerCount() <= 1) {
@@ -166,13 +169,15 @@ public class ServerManagementController {
 
         try {
             // Find the server
-            ServerInfo existingServer = nginxConfig.getServerById(serverId);
+            Optional<ServerInfo> existingServerOpt = nginxConfig.getServerById(serverId);
 
-            if (existingServer == null) {
+            if (!existingServerOpt.isPresent()) {
                 response.put("status", "error");
                 response.put("message", "Server with ID '" + serverId + "' not found");
                 return ResponseEntity.notFound().build();
             }
+
+            ServerInfo existingServer = existingServerOpt.get();
 
             // Update server properties
             if (updatedServer.getHost() != null) {
@@ -221,13 +226,15 @@ public class ServerManagementController {
         Map<String, Object> response = new HashMap<>();
 
         try {
-            ServerInfo server = nginxConfig.getServerById(serverId);
+            Optional<ServerInfo> serverOpt = nginxConfig.getServerById(serverId);
 
-            if (server == null) {
+            if (!serverOpt.isPresent()) {
                 response.put("status", "error");
                 response.put("message", "Server with ID '" + serverId + "' not found");
                 return ResponseEntity.notFound().build();
             }
+
+            ServerInfo server = serverOpt.get();
 
             // Toggle enabled status
             server.setEnabled(!server.isEnabled());

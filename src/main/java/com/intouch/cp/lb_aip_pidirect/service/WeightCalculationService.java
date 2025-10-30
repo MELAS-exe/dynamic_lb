@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +25,9 @@ public class WeightCalculationService {
     private static final int MAX_WEIGHT = 100;
     private static final int DEFAULT_WEIGHT = 10;
 
+    /**
+     * Calculate weights for all servers (both incoming and outgoing)
+     */
     public List<WeightAllocation> calculateWeights(List<ServerMetrics> allMetrics) {
         log.debug("Calculating weights for {} servers", allMetrics.size());
 
@@ -35,8 +39,8 @@ public class WeightCalculationService {
 
         List<ServerMetrics> enabledMetrics = allMetrics.stream()
                 .filter(metrics -> {
-                    ServerInfo server = nginxConfig.getServerById(metrics.getServerId());
-                    return server != null && server.isEnabled();
+                    Optional<ServerInfo> server = nginxConfig.getServerById(metrics.getServerId());
+                    return server.isPresent() && server.get().isEnabled();
                 })
                 .toList();
 
@@ -60,11 +64,11 @@ public class WeightCalculationService {
 
         for (ServerMetrics metrics : allMetrics) {
             if (enabledMetrics.stream().noneMatch(m -> m.getServerId().equals(metrics.getServerId()))) {
-                ServerInfo serverInfo = nginxConfig.getServerById(metrics.getServerId());
-                if (serverInfo != null) {
+                Optional<ServerInfo> serverInfo = nginxConfig.getServerById(metrics.getServerId());
+                if (serverInfo.isPresent()) {
                     WeightAllocation allocation = new WeightAllocation(
                             metrics.getServerId(),
-                            serverInfo.getAddress(),
+                            serverInfo.get().getAddress(),
                             0,
                             0.0,
                             "Server manually disabled"
@@ -83,6 +87,102 @@ public class WeightCalculationService {
         normalizeWeightsToTotal(allocations, 100);
 
         log.info("Weight calculation completed. Active servers: {}",
+                allocations.stream().filter(WeightAllocation::isActive).count());
+
+        return allocations;
+    }
+
+    /**
+     * Calculate weights specifically for incoming servers
+     */
+    public List<WeightAllocation> calculateIncomingWeights(List<ServerMetrics> incomingMetrics) {
+        log.debug("Calculating weights for {} incoming servers", incomingMetrics.size());
+        return calculateWeightsForServerGroup(incomingMetrics, nginxConfig.getIncomingServers(), "incoming");
+    }
+
+    /**
+     * Calculate weights specifically for outgoing servers
+     */
+    public List<WeightAllocation> calculateOutgoingWeights(List<ServerMetrics> outgoingMetrics) {
+        log.debug("Calculating weights for {} outgoing servers", outgoingMetrics.size());
+        return calculateWeightsForServerGroup(outgoingMetrics, nginxConfig.getOutgoingServers(), "outgoing");
+    }
+
+    /**
+     * Generic method to calculate weights for a specific server group
+     */
+    private List<WeightAllocation> calculateWeightsForServerGroup(
+            List<ServerMetrics> metrics,
+            List<ServerInfo> servers,
+            String groupName) {
+
+        log.debug("Calculating weights for {} {} servers", servers.size(), groupName);
+
+        List<WeightAllocation> allocations = new ArrayList<>();
+
+        if (servers.isEmpty()) {
+            log.info("No {} servers configured", groupName);
+            return allocations;
+        }
+
+        if (metrics.isEmpty()) {
+            log.warn("No metrics available for {} servers. Using default weights.", groupName);
+            return assignDefaultWeightsForServers(servers);
+        }
+
+        List<ServerMetrics> enabledMetrics = metrics.stream()
+                .filter(m -> {
+                    Optional<ServerInfo> server = servers.stream()
+                            .filter(s -> s.getId().equals(m.getServerId()))
+                            .findFirst();
+                    return server.isPresent() && server.get().isEnabled();
+                })
+                .toList();
+
+        if (enabledMetrics.isEmpty()) {
+            log.warn("All {} servers are disabled. Using default weights.", groupName);
+            return assignDefaultWeightsForServers(servers);
+        }
+
+        List<WeightScore> scores = new ArrayList<>();
+        for (ServerMetrics m : enabledMetrics) {
+            WeightScore score = calculateServerScore(m);
+            scores.add(score);
+            log.debug("{} Server {} - Instant: {}ms, EWMA: {}ms, Raw Score: {:.3f}",
+                    groupName,
+                    m.getServerId(),
+                    String.format("%.2f", m.getAvgResponseTimeMs()),
+                    String.format("%.2f", m.getEwmaLatencyMs()),
+                    score.getRawScore());
+        }
+
+        normalizeAndAssignWeights(scores, allocations);
+
+        // Add disabled servers with 0 weight
+        for (ServerMetrics m : metrics) {
+            if (enabledMetrics.stream().noneMatch(em -> em.getServerId().equals(m.getServerId()))) {
+                Optional<ServerInfo> serverInfo = servers.stream()
+                        .filter(s -> s.getId().equals(m.getServerId()))
+                        .findFirst();
+                if (serverInfo.isPresent()) {
+                    WeightAllocation allocation = new WeightAllocation(
+                            m.getServerId(),
+                            serverInfo.get().getAddress(),
+                            0,
+                            0.0,
+                            "Server manually disabled"
+                    );
+                    allocations.add(allocation);
+                }
+            }
+        }
+
+        ensureMinimumTraffic(allocations);
+        applyFixedWeights(allocations);
+        normalizeWeightsToTotal(allocations, 100);
+
+        log.info("{} weight calculation completed. Active servers: {}",
+                groupName,
                 allocations.stream().filter(WeightAllocation::isActive).count());
 
         return allocations;
@@ -368,8 +468,8 @@ public class WeightCalculationService {
         }
 
         for (WeightScore score : scores) {
-            ServerInfo serverInfo = nginxConfig.getServerById(score.getServerId());
-            if (serverInfo == null) continue;
+            Optional<ServerInfo> serverInfo = nginxConfig.getServerById(score.getServerId());
+            if (!serverInfo.isPresent()) continue;
 
             double normalizedScore = score.getRawScore() / totalScore;
             int weight = Math.max(MIN_WEIGHT, Math.min(MAX_WEIGHT,
@@ -381,7 +481,7 @@ public class WeightCalculationService {
 
             WeightAllocation allocation = new WeightAllocation(
                     score.getServerId(),
-                    serverInfo.getAddress(),
+                    serverInfo.get().getAddress(),
                     weight,
                     score.getRawScore(),
                     score.getReason()
@@ -407,10 +507,55 @@ public class WeightCalculationService {
         }
     }
 
+    /**
+     * Assign default weights for all servers (incoming + outgoing)
+     */
     private List<WeightAllocation> assignDefaultWeights() {
         List<WeightAllocation> allocations = new ArrayList<>();
 
-        for (ServerInfo server : nginxConfig.getServers()) {
+        // Add incoming servers
+        for (ServerInfo server : nginxConfig.getIncomingServers()) {
+            WeightAllocation allocation = new WeightAllocation(
+                    server.getId(),
+                    server.getAddress(),
+                    DEFAULT_WEIGHT,
+                    0.5,
+                    "Default weight - no metrics available"
+            );
+            allocations.add(allocation);
+        }
+
+        // Add outgoing servers
+        for (ServerInfo server : nginxConfig.getOutgoingServers()) {
+            WeightAllocation allocation = new WeightAllocation(
+                    server.getId(),
+                    server.getAddress(),
+                    DEFAULT_WEIGHT,
+                    0.5,
+                    "Default weight - no metrics available"
+            );
+            allocations.add(allocation);
+        }
+
+        log.warn("No metrics available. Assigning default weights to {} servers (incoming + outgoing)",
+                allocations.size());
+
+        // Apply fixed weights even for default weights
+        applyFixedWeights(allocations);
+
+        // Normalize to ensure sum is 100
+        normalizeWeightsToTotal(allocations, 100);
+
+        return allocations;
+    }
+
+    /**
+     * Assign default weights for a specific list of servers
+     */
+    private List<WeightAllocation> assignDefaultWeightsForServers(List<ServerInfo> servers) {
+        List<WeightAllocation> allocations = new ArrayList<>();
+
+        for (ServerInfo server : servers) {
             WeightAllocation allocation = new WeightAllocation(
                     server.getId(),
                     server.getAddress(),
@@ -434,12 +579,12 @@ public class WeightCalculationService {
 
     private void assignDefaultWeights(List<WeightScore> scores, List<WeightAllocation> allocations) {
         for (WeightScore score : scores) {
-            ServerInfo serverInfo = nginxConfig.getServerById(score.getServerId());
-            if (serverInfo == null) continue;
+            Optional<ServerInfo> serverInfo = nginxConfig.getServerById(score.getServerId());
+            if (!serverInfo.isPresent()) continue;
 
             WeightAllocation allocation = new WeightAllocation(
                     score.getServerId(),
-                    serverInfo.getAddress(),
+                    serverInfo.get().getAddress(),
                     DEFAULT_WEIGHT,
                     score.getRawScore(),
                     "Default weight - all servers unhealthy"
