@@ -23,11 +23,11 @@ public class WeightRecalculationService {
     }
 
     /**
-     * Trigger full weight recalculation and NGINX update
+     * Trigger full weight recalculation and NGINX update - DUAL UPSTREAM MODE
      */
     public void triggerWeightRecalculation() {
         try {
-            log.info("Triggering weight recalculation");
+            log.info("Triggering weight recalculation (DUAL UPSTREAM MODE)");
 
             // Get latest metrics
             var latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
@@ -37,14 +37,20 @@ public class WeightRecalculationService {
                 return;
             }
 
-            // Calculate new weights (will use fixed weights where configured)
-            var weights = weightCalculationService.calculateWeights(latestMetrics);
+            // Calculate weights for BOTH incoming and outgoing servers
+            var incomingWeights = weightCalculationService.calculateIncomingWeights(latestMetrics);
+            var outgoingWeights = weightCalculationService.calculateOutgoingWeights(latestMetrics);
 
-            // Update NGINX configuration
-            nginxConfigService.updateUpstreamConfiguration(weights);
+            log.info("Weights calculated - Incoming: {} servers, Outgoing: {} servers",
+                    incomingWeights.size(), outgoingWeights.size());
 
-            log.info("Weight recalculation completed successfully. Active servers: {}",
-                    weights.stream().filter(w -> w.isActive()).count());
+            // Update NGINX configuration with DUAL upstreams
+            nginxConfigService.updateDualUpstreamConfiguration(incomingWeights, outgoingWeights);
+
+            log.info("Weight recalculation completed successfully. " +
+                            "Active incoming: {}, Active outgoing: {}",
+                    incomingWeights.stream().filter(w -> w.isActive()).count(),
+                    outgoingWeights.stream().filter(w -> w.isActive()).count());
 
         } catch (Exception e) {
             log.error("Error during weight recalculation: {}", e.getMessage(), e);

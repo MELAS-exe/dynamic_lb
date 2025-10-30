@@ -1,0 +1,21 @@
+# k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dynamic-loadbalancer-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    networking.gke.io/managed-certificates: "dynamic-loadbalancer-cert"
+    kubernetes.io/ingress.global-static-ip-name: "loadbalancer-ip"  # Optional: reserve a static IP first
+spec:
+  rules:
+    - host: your-domain.com
+      http:
+        paths:
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dynamic-loadbalancer
+                port:
+                  number: 80

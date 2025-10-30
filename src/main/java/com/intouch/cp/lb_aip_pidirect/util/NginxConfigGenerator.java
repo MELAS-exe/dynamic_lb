@@ -51,7 +51,7 @@ public class NginxConfigGenerator {
         config.append("# Outgoing servers: ").append(activeOutgoing.size()).append("\n");
         config.append("# ============================================\n\n");
 
-// Always define both upstreams (even if empty)
+        // Generate INCOMING upstream (or placeholder if empty)
         if (activeIncoming.isEmpty()) {
             config.append("# upstream_incoming - Placeholder (no active servers)\n");
             config.append("upstream upstream_incoming {\n");
@@ -64,27 +64,13 @@ public class NginxConfigGenerator {
             config.append("\n");
         }
 
+        // Generate OUTGOING upstream (or placeholder if empty)
         if (activeOutgoing.isEmpty()) {
             config.append("# upstream_outgoing - Placeholder (no active servers)\n");
             config.append("upstream upstream_outgoing {\n");
             config.append("    server 127.0.0.1:65535;  # dummy fallback\n");
             config.append("}\n");
         } else {
-            config.append(generateUpstreamBlock("upstream_outgoing", activeOutgoing, BASE_PROXY_PORT_OUTGOING));
-            config.append("\n");
-            config.append(generateProxyServers(activeOutgoing, BASE_PROXY_PORT_OUTGOING));
-        }
-
-        // Generate INCOMING upstream if there are active incoming servers
-        if (!activeIncoming.isEmpty()) {
-            config.append(generateUpstreamBlock("upstream_incoming", activeIncoming, BASE_PROXY_PORT_INCOMING));
-            config.append("\n");
-            config.append(generateProxyServers(activeIncoming, BASE_PROXY_PORT_INCOMING));
-            config.append("\n");
-        }
-
-        // Generate OUTGOING upstream if there are active outgoing servers
-        if (!activeOutgoing.isEmpty()) {
             config.append(generateUpstreamBlock("upstream_outgoing", activeOutgoing, BASE_PROXY_PORT_OUTGOING));
             config.append("\n");
             config.append(generateProxyServers(activeOutgoing, BASE_PROXY_PORT_OUTGOING));
@@ -139,7 +125,12 @@ public class NginxConfigGenerator {
                 config.append("    server_name ").append(weight.getServerId()).append(";\n");
                 config.append("\n");
                 config.append("    location / {\n");
-                config.append("        proxy_pass https://").append(hostname).append(path).append("$request_uri;\n");
+
+                // Don't append $request_uri - it's already in the request
+                // The main nginx.conf rewrites /incoming/path to /path and proxies
+                // This internal proxy just forwards to the backend with its base path
+                config.append("        proxy_pass https://").append(hostname).append(path).append(";\n");
+
                 config.append("\n");
                 config.append("        # Headers\n");
                 config.append("        proxy_set_header Host ").append(hostname).append(";\n");
@@ -191,10 +182,10 @@ public class NginxConfigGenerator {
     private String generateFallbackConfig() {
         return "# No active servers - fallback configuration\n" +
                 "upstream upstream_incoming {\n" +
-                "    server 127.0.0.1:8080;\n" +
+                "    server 127.0.0.1:8090;\n" +
                 "}\n\n" +
                 "upstream upstream_outgoing {\n" +
-                "    server 127.0.0.1:8080;\n" +
+                "    server 127.0.0.1:8090;\n" +
                 "}\n";
     }
 

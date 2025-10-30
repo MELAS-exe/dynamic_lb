@@ -1,0 +1,9 @@
+# k8s/managed-cert.yaml
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: dynamic-loadbalancer-cert
+spec:
+  domains:
+    - your-domain.com
+    - www.your-domain.com

@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Enhanced MetricsCollectionService with Redis integration for shared state
+ * Enhanced MetricsCollectionService with Redis integration and DUAL upstream support
  */
 @Service
 @RequiredArgsConstructor
@@ -111,7 +111,7 @@ public class MetricsCollectionService {
     }
 
     /**
-     * Scheduled task to process metrics and update weights
+     * Scheduled task to process metrics and update weights - DUAL UPSTREAM MODE
      * Uses Redis lock to ensure only one instance performs the update
      */
     @Scheduled(fixedRateString = "#{${loadbalancer.simulation.interval-seconds:60} * 1000}")
@@ -124,7 +124,7 @@ public class MetricsCollectionService {
         }
 
         try {
-            log.debug("Processing metrics and updating weights");
+            log.debug("Processing metrics and updating weights (DUAL UPSTREAM MODE)");
 
             // Get latest metrics from Redis (shared across instances)
             List<ServerMetrics> latestMetrics = getLatestMetricsForAllServers();
@@ -159,16 +159,22 @@ public class MetricsCollectionService {
                             m.getHealthScore())
             );
 
-            // Calculate new weights
-            var weightAllocations = weightCalculationService.calculateWeights(freshMetrics);
+            // ========== DUAL UPSTREAM MODE ==========
+            // Calculate weights separately for incoming and outgoing servers
+
+            var incomingWeights = weightCalculationService.calculateIncomingWeights(freshMetrics);
+            var outgoingWeights = weightCalculationService.calculateOutgoingWeights(freshMetrics);
+
+            log.info("Calculated weights - Incoming: {} servers, Outgoing: {} servers",
+                    incomingWeights.size(), outgoingWeights.size());
 
             // Store weights in Redis
-            redisStateService.storeWeights(weightAllocations);
+            redisStateService.storeWeights(outgoingWeights); // For backward compatibility
 
-            // Update NGINX configuration
-            nginxConfigService.updateUpstreamConfiguration(weightAllocations);
+            // Update NGINX configuration with DUAL upstreams
+            nginxConfigService.updateDualUpstreamConfiguration(incomingWeights, outgoingWeights);
 
-            log.info("Successfully processed metrics for {} servers and updated weights",
+            log.info("Successfully processed metrics for {} servers and updated DUAL upstream weights",
                     freshMetrics.size());
 
         } catch (Exception e) {

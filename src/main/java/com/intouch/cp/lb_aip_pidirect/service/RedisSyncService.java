@@ -22,6 +22,8 @@ public class RedisSyncService {
     private final RedisStateService redisStateService;
     private final NginxConfigService nginxConfigService;
     private final NginxConfig nginxConfig;
+    private final WeightCalculationService weightCalculationService;
+    private final MetricsCollectionService metricsCollectionService;
 
     @Value("${instance.id:default-instance}")
     private String instanceId;
@@ -33,10 +35,10 @@ public class RedisSyncService {
 
     @PostConstruct
     public void init() {
-        log.info("=== Redis Sync Service Initialized ===");
+        log.info("=== Redis Sync Service Initialized (DUAL UPSTREAM MODE) ===");
         log.info("Instance ID: {}", instanceId);
         log.info("Sync interval: {}ms", nginxConfig.getRedis().getIntervals().getConfigSync());
-        
+
         // Perform initial sync check
         performInitialSync();
     }
@@ -47,7 +49,7 @@ public class RedisSyncService {
     private void performInitialSync() {
         try {
             log.info("Performing initial sync check...");
-            
+
             if (!redisStateService.isRedisHealthy()) {
                 log.warn("Redis is not healthy during initial sync. Will retry on scheduled sync.");
                 return;
@@ -55,10 +57,14 @@ public class RedisSyncService {
 
             // Check if there are existing weight allocations in Redis
             List<WeightAllocation> weights = redisStateService.getWeightAllocations();
-            
+
             if (!weights.isEmpty()) {
-                log.info("Found {} existing weight allocations in Redis. Syncing to Nginx...", weights.size());
-                syncWeightsToNginx(weights);
+                log.info("Found {} existing weight allocations in Redis. " +
+                        "Will recalculate with DUAL upstream support...", weights.size());
+
+                // Instead of syncing old single-upstream weights,
+                // recalculate fresh dual upstream weights
+                recalculateDualUpstreamWeights();
             } else {
                 log.info("No existing weight allocations found in Redis");
             }
@@ -69,14 +75,16 @@ public class RedisSyncService {
 
     /**
      * Periodically sync Redis data to Nginx configuration
-     * This runs on all instances and updates local Nginx based on Redis state
+     * DISABLED in favor of direct dual upstream updates
+     *
+     * This method is now primarily for monitoring and fallback purposes
      */
     @Scheduled(fixedDelayString = "${loadbalancer.redis.intervals.config-sync:10000}")
     public void syncRedisToNginx() {
         syncCount++;
-        
+
         try {
-            log.debug("[{}] Starting Redis -> Nginx sync (sync #{})", instanceId, syncCount);
+            log.debug("[{}] Redis sync check (sync #{})", instanceId, syncCount);
 
             // Check Redis health
             if (!redisStateService.isRedisHealthy()) {
@@ -85,38 +93,52 @@ public class RedisSyncService {
                 return;
             }
 
-            // Get weight allocations from Redis
-            List<WeightAllocation> weights = redisStateService.getWeightAllocations();
-            
-            if (weights.isEmpty()) {
+            // Get weight allocations from Redis (these are backward-compatible outgoing weights)
+            List<WeightAllocation> redisWeights = redisStateService.getWeightAllocations();
+
+            if (redisWeights.isEmpty()) {
                 log.debug("[{}] No weight allocations found in Redis. Skipping sync.", instanceId);
                 return;
             }
 
             // Check if weights were recently updated
             Optional<LocalDateTime> lastCalculation = redisStateService.getLastWeightCalculationTime();
-            
+
             if (lastCalculation.isPresent()) {
                 LocalDateTime calcTime = lastCalculation.get();
-                
+
                 // Only sync if this is newer than our last sync
                 if (lastSyncTime != null && !calcTime.isAfter(lastSyncTime)) {
                     log.debug("[{}] No new weight calculations since last sync. Skipping.", instanceId);
                     return;
                 }
-                
+
                 long secondsSinceCalc = ChronoUnit.SECONDS.between(calcTime, LocalDateTime.now());
-                log.info("[{}] Syncing weights calculated {} seconds ago", instanceId, secondsSinceCalc);
+
+                // If weights are fresh (< 10 seconds old), they were likely just calculated
+                // by this instance or another with dual upstream support - don't overwrite
+                if (secondsSinceCalc < 10) {
+                    log.debug("[{}] Weights are fresh ({} seconds old). " +
+                                    "Assuming dual upstream already configured. Skipping sync.",
+                            instanceId, secondsSinceCalc);
+                    lastSyncTime = LocalDateTime.now();
+                    return;
+                }
+
+                log.info("[{}] Weights are {} seconds old. " +
+                                "Recalculating with DUAL upstream support...",
+                        instanceId, secondsSinceCalc);
             }
 
-            // Sync weights to Nginx
-            syncWeightsToNginx(weights);
-            
+            // Instead of syncing potentially stale single-upstream weights,
+            // recalculate fresh dual upstream weights
+            recalculateDualUpstreamWeights();
+
             lastSyncTime = LocalDateTime.now();
             successfulSyncs++;
-            
+
             log.info("[{}] Sync completed successfully (Total: {}, Success: {}, Failed: {})",
-                instanceId, syncCount, successfulSyncs, failedSyncs);
+                    instanceId, syncCount, successfulSyncs, failedSyncs);
 
         } catch (Exception e) {
             failedSyncs++;
@@ -125,21 +147,50 @@ public class RedisSyncService {
     }
 
     /**
-     * Apply weight allocations to Nginx configuration
+     * Recalculate weights with dual upstream support
      */
+    private void recalculateDualUpstreamWeights() {
+        try {
+            log.info("[{}] Recalculating weights with DUAL upstream support", instanceId);
+
+            // Get latest metrics
+            var latestMetrics = metricsCollectionService.getLatestMetricsForAllServers();
+
+            if (latestMetrics.isEmpty()) {
+                log.warn("[{}] No metrics available for weight calculation", instanceId);
+                return;
+            }
+
+            // Calculate weights for BOTH incoming and outgoing
+            var incomingWeights = weightCalculationService.calculateIncomingWeights(latestMetrics);
+            var outgoingWeights = weightCalculationService.calculateOutgoingWeights(latestMetrics);
+
+            log.info("[{}] Calculated - Incoming: {} servers, Outgoing: {} servers",
+                    instanceId, incomingWeights.size(), outgoingWeights.size());
+
+            // Update with DUAL upstreams
+            nginxConfigService.updateDualUpstreamConfiguration(incomingWeights, outgoingWeights);
+
+            log.info("[{}] DUAL upstream configuration updated successfully", instanceId);
+
+        } catch (Exception e) {
+            log.error("[{}] Error recalculating dual upstream weights: {}",
+                    instanceId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Apply weight allocations to Nginx configuration (DEPRECATED - use dual upstream)
+     */
+    @Deprecated
     private void syncWeightsToNginx(List<WeightAllocation> weights) {
         try {
-            log.debug("[{}] Applying {} weight allocations to Nginx", instanceId, weights.size());
-            
-            // Update Nginx configuration
-            nginxConfigService.updateUpstreamConfiguration(weights);
-            
-            // Optionally store the current config in Redis for monitoring
-            // (This is mainly for visibility, not for syncing back)
-            storeCurrentNginxConfig();
-            
-            log.info("[{}] Successfully applied weight allocations to Nginx", instanceId);
-            
+            log.warn("[{}] syncWeightsToNginx called with single upstream list. " +
+                            "This is deprecated. Triggering dual upstream recalculation instead.",
+                    instanceId);
+
+            recalculateDualUpstreamWeights();
+
         } catch (Exception e) {
             log.error("[{}] Error applying weights to Nginx: {}", instanceId, e.getMessage(), e);
             throw e;
@@ -153,7 +204,7 @@ public class RedisSyncService {
         try {
             String configPath = nginxConfig.getNginx().getConfigPath();
             java.nio.file.Path path = java.nio.file.Paths.get(configPath);
-            
+
             if (java.nio.file.Files.exists(path)) {
                 String configContent = java.nio.file.Files.readString(path);
                 redisStateService.storeNginxConfig(configContent);
@@ -182,13 +233,13 @@ public class RedisSyncService {
      */
     public SyncStats getSyncStats() {
         return SyncStats.builder()
-            .instanceId(instanceId)
-            .totalSyncs(syncCount)
-            .successfulSyncs(successfulSyncs)
-            .failedSyncs(failedSyncs)
-            .lastSyncTime(lastSyncTime)
-            .redisHealthy(redisStateService.isRedisHealthy())
-            .build();
+                .instanceId(instanceId)
+                .totalSyncs(syncCount)
+                .successfulSyncs(successfulSyncs)
+                .failedSyncs(failedSyncs)
+                .lastSyncTime(lastSyncTime)
+                .redisHealthy(redisStateService.isRedisHealthy())
+                .build();
     }
 
     @lombok.Data
